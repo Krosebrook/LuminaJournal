@@ -1,0 +1,8 @@
+{
+  "name": "Lumina - Magic Writing Partner",
+  "description": "A distraction-free, AI-powered writing workspace where Gemini acts as an inline editor, thought partner, and proactive collaborator.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
