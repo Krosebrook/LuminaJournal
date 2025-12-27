@@ -15,6 +15,13 @@ export interface Suggestion {
   explanation: string;
 }
 
+export interface Comment {
+  id: string;
+  text: string;
+  originalText: string;
+  timestamp: number;
+}
+
 export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
@@ -25,6 +32,7 @@ export interface AppState {
   tone: WritingTone;
   isProcessing: boolean;
   suggestions: Suggestion[];
+  comments: Comment[];
   attachments: FileAttachment[];
   chatHistory: ChatMessage[];
 }

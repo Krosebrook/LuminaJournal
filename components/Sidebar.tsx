@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { generateDraftStream, chatWithContext } from '../services/geminiService';
-import { FileAttachment, WritingTone, ChatMessage } from '../types';
+import { FileAttachment, WritingTone, ChatMessage, Suggestion } from '../types';
 
 interface SidebarProps {
   tone: WritingTone;
@@ -10,9 +10,22 @@ interface SidebarProps {
   isProcessing: boolean;
   setIsProcessing: (v: boolean) => void;
   content: string;
+  suggestions: Suggestion[];
+  setSuggestions: React.Dispatch<React.SetStateAction<Suggestion[]>>;
+  onApplyAll: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ tone, setTone, onDraftGenerated, isProcessing, setIsProcessing, content }) => {
+const Sidebar: React.FC<SidebarProps> = ({ 
+  tone, 
+  setTone, 
+  onDraftGenerated, 
+  isProcessing, 
+  setIsProcessing, 
+  content,
+  suggestions,
+  setSuggestions,
+  onApplyAll
+}) => {
   const [prompt, setPrompt] = useState('');
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -72,7 +85,6 @@ const Sidebar: React.FC<SidebarProps> = ({ tone, setTone, onDraftGenerated, isPr
       let modelResponse = "";
       await chatWithContext(content, chatHistory, chatInput, (chunk) => {
         modelResponse = chunk;
-        // In a complex app, we'd stream this specifically into the chat UI state
       });
       setChatHistory(prev => [...prev, { role: 'model', text: modelResponse }]);
     } catch (e) {
@@ -125,6 +137,19 @@ const Sidebar: React.FC<SidebarProps> = ({ tone, setTone, onDraftGenerated, isPr
           <div className="flex-1 overflow-y-auto pr-2 space-y-10">
             {activeTab === 'config' ? (
               <>
+                {/* BATCH ACTION IN SIDEBAR */}
+                {suggestions.length > 0 && (
+                  <section className="animate-in slide-in-from-top-4 duration-500">
+                    <button 
+                      onClick={onApplyAll}
+                      className="w-full flex items-center justify-center gap-3 px-6 py-5 bg-blue-600 text-white rounded-[1.5rem] shadow-xl shadow-blue-500/20 hover:bg-blue-700 transition-all group active:scale-[0.98]"
+                    >
+                      <svg className="w-4 h-4 text-blue-200 group-hover:rotate-12 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                      <span className="text-[10px] font-black uppercase tracking-[0.2em]">Accept All Refinements</span>
+                    </button>
+                  </section>
+                )}
+
                 <section>
                   <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.3em] mb-4">Sonic Profile</label>
                   <div className="grid grid-cols-2 gap-3">
