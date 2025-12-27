@@ -34,9 +34,43 @@
         border-bottom: 2px dashed #3b82f6;
         cursor: pointer;
         background-color: rgba(59, 130, 246, 0.05);
+        transition: background-color 0.2s ease;
       }
       .ai-suggestion:hover {
         background-color: rgba(59, 130, 246, 0.1);
+      }
+      .spell-error {
+        text-decoration: underline;
+        text-decoration-style: wavy;
+        text-decoration-color: #ef4444;
+        text-decoration-thickness: 2px;
+        text-underline-offset: 5px;
+        cursor: help;
+        animation: spell-pulse 3s infinite ease-in-out;
+      }
+      .spell-error:hover {
+        background-color: rgba(239, 68, 68, 0.08);
+        text-decoration-color: #dc2626;
+      }
+      
+      @keyframes spell-pulse {
+        0%, 100% { text-decoration-color: #ef4444; opacity: 1; }
+        50% { text-decoration-color: #f87171; opacity: 0.85; }
+      }
+
+      /* Custom scrollbar for a cleaner look */
+      ::-webkit-scrollbar {
+        width: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #e5e7eb;
+        border-radius: 10px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #d1d5db;
       }
     </style>
   <script type="importmap">

@@ -1,19 +1,33 @@
 
+/**
+ * Lumina Intelligence Service
+ * Core logic for document generation, surgical editing, and proactive analysis.
+ * Utilizes a hybrid Gemini 3 architecture for optimal latency/quality trade-offs.
+ */
+
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { FileAttachment, WritingTone, ChatMessage } from "../types";
 
+// Standardizing initialization to ensure thread safety
 const getAIClient = () => {
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
 const TONE_INSTRUCTIONS: Record<WritingTone, string> = {
-  creative: "Use vivid imagery, varied sentence structures, and an evocative, storytelling voice.",
-  professional: "Maintain a clear, authoritative, and respectful tone. Focus on clarity and efficiency.",
-  punchy: "Use short sentences. Be direct. High impact. No fluff.",
-  academic: "Use formal language, precise terminology, and a structured, logical flow.",
-  casual: "Friendly, relatable, and relaxed. Use contractions and a conversational rhythm."
+  creative: "Vivid imagery, varied sentence structures, evocative storytelling voice.",
+  professional: "Authoritative, respectful, clear, and efficient.",
+  punchy: "Short sentences. Direct. High impact. Zero fluff.",
+  academic: "Formal, precise terminology, logical and structured flow.",
+  casual: "Friendly, relatable, relaxed, conversational rhythm."
 };
 
+/**
+ * Generates a full document draft using the Pro model for high reasoning depth.
+ * @param prompt The user's narrative direction
+ * @param attachments Supporting documentation/images
+ * @param tone The selected sonic profile
+ * @param onChunk Callback for streaming tokens
+ */
 export const generateDraftStream = async (
   prompt: string, 
   attachments: FileAttachment[], 
@@ -23,6 +37,7 @@ export const generateDraftStream = async (
   const ai = getAIClient();
   const parts: any[] = [{ text: `TONE: ${TONE_INSTRUCTIONS[tone]}\n\nPROMPT: ${prompt}` }];
 
+  // Inject multi-modal context if provided
   attachments.forEach(file => {
     parts.push({
       inlineData: {
@@ -36,7 +51,7 @@ export const generateDraftStream = async (
     model: 'gemini-3-pro-preview',
     contents: { parts },
     config: {
-      systemInstruction: "You are an elite writing partner. Produce only the requested content. No conversational filler. If files are provided, integrate their facts deeply into the writing.",
+      systemInstruction: "You are an elite writing partner. Produce only the requested content. No conversational filler. Integrate facts from attachments deeply.",
       thinkingConfig: { thinkingBudget: 4000 }
     },
   });
@@ -52,6 +67,9 @@ export const generateDraftStream = async (
   return fullText;
 };
 
+/**
+ * Surgical rewrite of selected text using Flash for sub-second latency.
+ */
 export const rewriteSelectionStream = async (
   fullContent: string, 
   selection: string, 
@@ -62,18 +80,18 @@ export const rewriteSelectionStream = async (
   const ai = getAIClient();
   const prompt = `
     CONTEXT: ${fullContent}
-    SELECTION TO EDIT: "${selection}"
-    FEEDBACK/INSTRUCTION: "${feedback}"
-    DESIRED TONE: ${TONE_INSTRUCTIONS[tone]}
+    TARGET: "${selection}"
+    FEEDBACK: "${feedback}"
+    TONE: ${TONE_INSTRUCTIONS[tone]}
     
-    TASK: Rewrite ONLY the SELECTION. Ensure it fits perfectly into the surrounding CONTEXT. Return ONLY the rewritten text.
+    Rewrite ONLY the TARGET. Fit the CONTEXT. Return only the revised text.
   `;
 
   const result = await ai.models.generateContentStream({
     model: 'gemini-3-flash-preview',
     contents: prompt,
     config: {
-      systemInstruction: "You are a surgical editor. Replace the provided text while honoring the feedback and context.",
+      systemInstruction: "You are a surgical editor. Replace text while maintaining perfect contextual continuity.",
     },
   });
 
@@ -88,15 +106,18 @@ export const rewriteSelectionStream = async (
   return fullText;
 };
 
+/**
+ * Proactively scans content for structural and stylistic improvements.
+ */
 export const getProactiveSuggestions = async (content: string, tone: WritingTone): Promise<any[]> => {
   if (!content || content.length < 50) return [];
 
   const ai = getAIClient();
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: `Current Content: "${content}"\nTone: ${tone}`,
+    contents: `Content: "${content}"\nTone: ${tone}`,
     config: {
-      systemInstruction: "You are a world-class editor. Identify exactly two segments of the text that need improvement. One should be a structural/tone suggestion and the other a phrasing improvement. Be specific.",
+      systemInstruction: "Identify two critical segments for improvement. One structural, one phrasing. Return as JSON.",
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.ARRAY,
@@ -121,6 +142,46 @@ export const getProactiveSuggestions = async (content: string, tone: WritingTone
   }
 };
 
+/**
+ * Scans text for linguistic errors and returns corrections.
+ */
+export const getSpellingCorrections = async (content: string): Promise<any[]> => {
+  if (!content || content.length < 5) return [];
+
+  const ai = getAIClient();
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: `Scan for errors: "${content}"`,
+    config: {
+      systemInstruction: "Identify misspelled words. Return JSON array of {word, corrections}.",
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            word: { type: Type.STRING },
+            corrections: { 
+              type: Type.ARRAY,
+              items: { type: Type.STRING }
+            }
+          },
+          required: ["word", "corrections"]
+        }
+      }
+    },
+  });
+
+  try {
+    return JSON.parse(response.text || "[]");
+  } catch (e) {
+    return [];
+  }
+};
+
+/**
+ * Chat-based counsel for brainstorming or research queries.
+ */
 export const chatWithContext = async (
   content: string,
   history: ChatMessage[],
@@ -131,15 +192,11 @@ export const chatWithContext = async (
   const chat = ai.chats.create({
     model: 'gemini-3-flash-preview',
     config: {
-      systemInstruction: `You are a writing assistant. You have access to the current document content: "${content}". 
-      Help the user brainstorm, research, or critique the work. Keep answers focused on the writing.`,
+      systemInstruction: "You are a writing assistant. Use the document content for context. Help brainstorm or critique.",
     }
   });
 
-  // Convert history for the Gemini SDK chat format if needed, 
-  // but we'll use a simple prompt for this context-injection.
-  const fullPrompt = `DOCUMENT CONTENT:\n${content}\n\nUSER QUESTION: ${message}`;
-  
+  const fullPrompt = `DOC:\n${content}\n\nUSER: ${message}`;
   const result = await chat.sendMessageStream({ message: fullPrompt });
   
   let fullText = "";
