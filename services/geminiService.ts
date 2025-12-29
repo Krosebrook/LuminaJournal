@@ -11,7 +11,8 @@ const TONE_INSTRUCTIONS: Record<WritingTone, string> = {
   professional: "Authoritative, respectful, clear, and efficient.",
   punchy: "Short sentences. Direct. High impact. Zero fluff.",
   academic: "Formal, precise terminology, logical and structured flow.",
-  casual: "Friendly, relatable, relaxed, conversational rhythm."
+  casual: "Friendly, relatable, relaxed, conversational rhythm.",
+  memoir: "Introspective and deeply personal. Focus on sensory details (sounds, smells, textures), emotional honesty, and the passage of time. Avoid clichés; sound like a real person reflecting on their life."
 };
 
 /**
@@ -41,7 +42,7 @@ export const generateDraftStream = async (
   const parts: any[] = [{ text: `TONE: ${TONE_INSTRUCTIONS[tone]}\n\nGOAL: ${prompt}` }];
   parts.push(...prepareAttachments(attachments));
 
-  const baseInstruction = "You are an elite writing partner. Produce clean, structured text only.";
+  const baseInstruction = "You are an elite writing partner and biographer. Help the user tell their life story with depth and authenticity. Produce clean, structured text only.";
   const finalInstruction = customSystemInstruction ? `${baseInstruction} ${customSystemInstruction}` : baseInstruction;
 
   const result = await ai.models.generateContentStream({
@@ -73,7 +74,7 @@ export const rewriteSelectionStream = async (
   const result = await ai.models.generateContentStream({
     model: 'gemini-3-flash-preview',
     contents: { parts: [{ text: `CONTEXT: ${fullContent}\nREWRITE: "${selection}"\nREQUEST: ${feedback}` }] },
-    config: { systemInstruction: "Rewrite ONLY the selection. Maintain context." },
+    config: { systemInstruction: `Tone: ${TONE_INSTRUCTIONS[tone]}. Rewrite ONLY the selection while maintaining the memoir's emotional consistency.` },
   });
 
   let fullText = "";
@@ -108,7 +109,7 @@ export const getProactiveSuggestions = async (content: string, tone: WritingTone
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Suggest improvements for: "${content}"`,
+      contents: `Suggest improvements for this autobiography draft: "${content}". Focus on sensory details and emotional resonance.`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -138,7 +139,7 @@ export const chatWithContext = async (
   customSystemInstruction?: string
 ) => {
   const ai = getAIClient();
-  const baseInstruction = "You are a helpful writing assistant.";
+  const baseInstruction = "You are a professional ghostwriter and biographer. Your job is to help the user recall memories and turn them into compelling narrative prose.";
   const finalInstruction = customSystemInstruction ? `${baseInstruction} ${customSystemInstruction}` : baseInstruction;
   
   const chat = ai.chats.create({ 

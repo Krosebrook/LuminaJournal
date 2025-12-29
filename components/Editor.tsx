@@ -48,8 +48,13 @@ const Editor: React.FC<EditorProps> = ({
   const [selection, setSelection] = useState<{ text: string; range: Range | null; rect: DOMRect | null }>({ text: '', range: null, rect: null });
   const [feedback, setFeedback] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
-  const [spellErrors, setSpellErrors] = useState<SpellError[]>([]);
-  const [isSpellcheckEnabled, setIsSpellcheckEnabled] = useState(false);
+  const [spellErrors, setSpellErrors] = useState<SpellError[]>([
+    // Mock spell errors for demonstration
+    { id: 'se-1', word: 'biographry', corrections: ['biography', 'biographies'] },
+    { id: 'se-2', word: 'memoire', corrections: ['memoir', 'memoirs'] },
+    { id: 'se-3', word: 'autobiograpy', corrections: ['autobiography'] }
+  ]);
+  const [isSpellcheckEnabled, setIsSpellcheckEnabled] = useState(true);
   const [isFlashing, setIsFlashing] = useState(false);
   const [isCommenting, setIsCommenting] = useState(false);
   const [commentText, setCommentText] = useState('');
@@ -57,6 +62,7 @@ const Editor: React.FC<EditorProps> = ({
   const [hoveredSuggestion, setHoveredSuggestion] = useState<{ s: Suggestion, rect: DOMRect } | null>(null);
   const [hoveredComment, setHoveredComment] = useState<{ c: Comment, rect: DOMRect } | null>(null);
   const [hoveredCommentId, setHoveredCommentId] = useState<string | null>(null);
+  const [inspectedSpellError, setInspectedSpellError] = useState<{ err: SpellError, rect: DOMRect } | null>(null);
   const [showMarginNotes, setShowMarginNotes] = useState(true);
 
   // Synchronize internal state with DOM
@@ -153,6 +159,17 @@ const Editor: React.FC<EditorProps> = ({
     }
   }, [content, suggestions, comments, onChange, setSuggestions, pushToHistory]);
 
+  const applyCorrection = (errorId: string, correction: string) => {
+    const err = spellErrors.find(e => e.id === errorId);
+    if (!err) return;
+    const newContent = content.replace(new RegExp(`\\b${err.word}\\b`, 'g'), correction);
+    const newErrors = spellErrors.filter(e => e.id !== errorId);
+    onChange(newContent);
+    setSpellErrors(newErrors);
+    setInspectedSpellError(null);
+    pushToHistory(newContent, suggestions, comments);
+  };
+
   const handleMouseUp = useCallback(() => {
     const sel = window.getSelection();
     if (sel && sel.toString().trim().length > 0) {
@@ -163,8 +180,9 @@ const Editor: React.FC<EditorProps> = ({
         rect: range.getBoundingClientRect()
       });
       setIsCommenting(false);
+      setInspectedSpellError(null);
     } else {
-      if (!document.activeElement?.closest('#iteration-box')) {
+      if (!document.activeElement?.closest('#iteration-box') && !document.activeElement?.closest('#spellcheck-box')) {
         setSelection({ text: '', range: null, rect: null });
         setIsCommenting(false);
       }
@@ -173,6 +191,19 @@ const Editor: React.FC<EditorProps> = ({
 
   const handleEditorClick = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
+    
+    const spellErrorSpan = target.closest('.spell-error') as HTMLElement;
+    if (spellErrorSpan) {
+      e.stopPropagation();
+      const id = spellErrorSpan.getAttribute('data-error-id');
+      const err = spellErrors.find(e => e.id === id);
+      if (err) {
+        setInspectedSpellError({ err, rect: spellErrorSpan.getBoundingClientRect() });
+        setSelection({ text: '', range: null, rect: null });
+        return;
+      }
+    }
+
     const quickAcceptBtn = target.closest('.quick-accept-trigger') as HTMLElement;
     if (quickAcceptBtn) {
       e.stopPropagation();
@@ -192,6 +223,8 @@ const Editor: React.FC<EditorProps> = ({
       }
       return;
     }
+
+    setInspectedSpellError(null);
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
@@ -284,6 +317,41 @@ const Editor: React.FC<EditorProps> = ({
             <span className="text-[9px] font-black uppercase tracking-widest text-amber-600/80">Margin Note</span>
           </div>
           <p className="text-[11px] text-gray-700 font-medium">{hoveredComment.c.text}</p>
+        </div>
+      )}
+
+      {/* SPELLCHECK POPOVER */}
+      {inspectedSpellError && (
+        <div id="spellcheck-box" className="fixed z-[60] glass rounded-3xl shadow-2xl p-2 min-w-[180px] animate-in fade-in zoom-in duration-200 border border-red-100"
+          style={{ top: inspectedSpellError.rect.bottom + window.scrollY + 10, left: inspectedSpellError.rect.left + (inspectedSpellError.rect.width / 2) - 90 }}>
+          <div className="px-4 py-2 mb-1 border-b border-gray-100 flex items-center justify-between">
+            <span className="text-[8px] font-black uppercase tracking-widest text-red-500">Correct Spelling</span>
+            <button onClick={() => setInspectedSpellError(null)} className="text-gray-300 hover:text-gray-500"><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+          </div>
+          <div className="flex flex-col gap-1">
+            {inspectedSpellError.err.corrections.length > 0 ? (
+              inspectedSpellError.err.corrections.map(c => (
+                <button 
+                  key={c} 
+                  onClick={() => applyCorrection(inspectedSpellError.err.id, c)}
+                  className="w-full text-left px-4 py-2.5 rounded-2xl hover:bg-red-50 text-sm font-semibold text-gray-800 transition-colors flex items-center justify-between group"
+                >
+                  {c}
+                  <svg className="w-3 h-3 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path></svg>
+                </button>
+              ))
+            ) : (
+              <div className="px-4 py-3 text-xs text-gray-400 italic">No suggestions found</div>
+            )}
+            <div className="border-t border-gray-100 mt-1 pt-1">
+               <button 
+                onClick={() => setInspectedSpellError(null)}
+                className="w-full text-left px-4 py-2.5 rounded-2xl hover:bg-gray-50 text-[10px] font-bold text-gray-400 uppercase tracking-widest transition-colors"
+               >
+                 Ignore All
+               </button>
+            </div>
+          </div>
         </div>
       )}
 

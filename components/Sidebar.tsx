@@ -39,7 +39,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
   const [activeProfile, setActiveProfile] = useState<UserProfile | null>(null);
   const [isCreatingProfile, setIsCreatingProfile] = useState(false);
-  const [newProfile, setNewProfile] = useState<Partial<UserProfile>>({ name: '', tone: 'creative', systemInstruction: '' });
+  const [newProfile, setNewProfile] = useState<Partial<UserProfile>>({ name: '', tone: 'memoir', systemInstruction: '' });
 
   useEffect(() => {
     loadProfiles();
@@ -48,11 +48,11 @@ const Sidebar: React.FC<SidebarProps> = ({
   const loadProfiles = async () => {
     const allProfiles = await db.profiles.toArray();
     if (allProfiles.length === 0) {
-      // Create initial default profile
+      // Create initial default profile focused on autobiography
       const defaultProfile: UserProfile = {
-        name: 'Omniscient',
-        tone: 'creative',
-        systemInstruction: 'Be helpful, insightful, and poetic.',
+        name: 'The Biographer',
+        tone: 'memoir',
+        systemInstruction: 'Act as a professional biographer. Help me dig deeper into my memories. Ask about the smells, the sounds, and how I felt in the moment. Help me find the universal truth in my personal stories.',
         isDefault: true
       };
       const id = await db.profiles.add(defaultProfile);
@@ -72,13 +72,13 @@ const Sidebar: React.FC<SidebarProps> = ({
     if (!newProfile.name) return;
     const profile: UserProfile = {
       name: newProfile.name,
-      tone: newProfile.tone || 'creative',
+      tone: newProfile.tone || 'memoir',
       systemInstruction: newProfile.systemInstruction || '',
       isDefault: false
     };
     const id = await db.profiles.add(profile);
     setProfiles([...profiles, { ...profile, id }]);
-    setNewProfile({ name: '', tone: 'creative', systemInstruction: '' });
+    setNewProfile({ name: '', tone: 'memoir', systemInstruction: '' });
     setIsCreatingProfile(false);
   };
 
@@ -99,6 +99,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const tones: { id: WritingTone; label: string; icon: string }[] = [
+    { id: 'memoir', label: 'Memoir', icon: '🕯️' },
     { id: 'creative', label: 'Artistic', icon: '🎨' },
     { id: 'professional', label: 'Executive', icon: '💼' },
     { id: 'punchy', label: 'Direct', icon: '💥' },
@@ -196,7 +197,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                  {/* Profile Section */}
                  <section>
                     <div className="flex items-center justify-between mb-4">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.3em]">Writing Persona</label>
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.3em]">Story Companion</label>
                       <button onClick={() => setIsCreatingProfile(!isCreatingProfile)} className="text-xs font-bold text-blue-600">{isCreatingProfile ? 'Cancel' : '+ New'}</button>
                     </div>
 
@@ -205,7 +206,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                         <input 
                           value={newProfile.name} 
                           onChange={e => setNewProfile({...newProfile, name: e.target.value})} 
-                          placeholder="Identity Name (e.g. Biohacker)" 
+                          placeholder="Companion Name (e.g. Life Historian)" 
                           className="w-full bg-white border border-gray-100 rounded-2xl p-3 text-xs outline-none" 
                         />
                         <div className="flex gap-2">
@@ -222,10 +223,10 @@ const Sidebar: React.FC<SidebarProps> = ({
                         <textarea 
                           value={newProfile.systemInstruction} 
                           onChange={e => setNewProfile({...newProfile, systemInstruction: e.target.value})} 
-                          placeholder="Secret instructions for this persona..." 
+                          placeholder="How should this companion help you remember?" 
                           className="w-full h-24 bg-white border border-gray-100 rounded-2xl p-3 text-xs outline-none resize-none" 
                         />
-                        <button onClick={handleCreateProfile} className="w-full py-3 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest">Incept Persona</button>
+                        <button onClick={handleCreateProfile} className="w-full py-3 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest">Incept Companion</button>
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 gap-2">
@@ -255,7 +256,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                  </section>
 
                  <section>
-                   <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.3em] mb-4">Sonic Profile</label>
+                   <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.3em] mb-4">Voice Texture</label>
                    <div className="grid grid-cols-2 gap-3">
                      {tones.map(t => (
                        <button key={t.id} onClick={() => setTone(t.id)} className={`flex items-center gap-3 p-4 rounded-3xl border transition-all ${tone === t.id ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white/40 border-gray-100'}`}><span className="text-xl">{t.icon}</span><span className="text-xs font-bold">{t.label}</span></button>
@@ -263,16 +264,16 @@ const Sidebar: React.FC<SidebarProps> = ({
                    </div>
                  </section>
                  <section>
-                   <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.3em] mb-4">The Objective</label>
-                   <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Draft instructions..." className="w-full h-48 bg-white/50 border border-gray-100 rounded-[2rem] p-6 text-sm outline-none resize-none shadow-inner" />
+                   <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.3em] mb-4">Memory Seed</label>
+                   <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe a memory in its rawest form..." className="w-full h-48 bg-white/50 border border-gray-100 rounded-[2rem] p-6 text-sm outline-none resize-none shadow-inner" />
                  </section>
                  <section>
                     <label className="flex flex-col items-center justify-center gap-3 w-full p-10 border-2 border-dashed border-gray-200 rounded-[2.5rem] cursor-pointer hover:border-blue-400 transition-all">
                       <input type="file" className="hidden" multiple accept=".pdf,image/*" onChange={handleFileChange} />
-                      <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Add Knowledge</span>
+                      <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Attach Reference Photos</span>
                     </label>
                  </section>
-                 <button disabled={isProcessing || !prompt.trim()} onClick={handleDraft} className="w-full py-6 bg-gray-900 text-white rounded-[2rem] font-black text-[10px] uppercase tracking-[0.3em] shadow-xl">Summon Flow</button>
+                 <button disabled={isProcessing || !prompt.trim()} onClick={handleDraft} className="w-full py-6 bg-gray-900 text-white rounded-[2rem] font-black text-[10px] uppercase tracking-[0.3em] shadow-xl">Synthesize Scene</button>
               </div>
             )}
 
@@ -286,7 +287,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                   ))}
                 </div>
                 <div className="relative pt-4">
-                   <input value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleChat()} placeholder="Ask counsel..." className="w-full bg-white border border-gray-200 rounded-2xl py-4 px-6 text-sm outline-none pr-14" />
+                   <input value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleChat()} placeholder="Ask for counsel or memory prompts..." className="w-full bg-white border border-gray-200 rounded-2xl py-4 px-6 text-sm outline-none pr-14" />
                    <button onClick={handleChat} disabled={isProcessing || !chatInput.trim()} className="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-blue-600 text-white rounded-xl shadow-lg disabled:opacity-30"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M14 5l7 7-7 7M3 12h18"></path></svg></button>
                 </div>
               </div>

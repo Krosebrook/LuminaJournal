@@ -30,9 +30,10 @@
         color: #0369a1;
       }
       .glass {
-        background: rgba(255, 255, 255, 0.8);
-        backdrop-filter: blur(12px);
-        border: 1px solid rgba(0, 0, 0, 0.05);
+        background: rgba(255, 255, 255, 0.85);
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.5);
+        box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
       }
       .editor-container [contenteditable]:focus {
         outline: none;
@@ -92,20 +93,30 @@
       .spell-error {
         text-decoration: underline;
         text-decoration-style: wavy;
-        text-decoration-color: #ef4444;
-        text-decoration-thickness: 2px;
-        text-underline-offset: 5px;
-        cursor: help;
-        animation: spell-pulse 3s infinite ease-in-out;
+        text-decoration-color: #f87171;
+        text-decoration-thickness: 2.5px;
+        text-underline-offset: 6px;
+        cursor: pointer;
+        padding: 0 1px;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        animation: spell-wave-pulse 2.5s infinite ease-in-out;
+        display: inline-block;
       }
       .spell-error:hover {
-        background-color: rgba(239, 68, 68, 0.08);
-        text-decoration-color: #dc2626;
+        background-color: rgba(248, 113, 113, 0.1);
+        text-decoration-color: #ef4444;
+        transform: translateY(-1px);
       }
       
-      @keyframes spell-pulse {
-        0%, 1000% { text-decoration-color: #ef4444; opacity: 1; }
-        50% { text-decoration-color: #f87171; opacity: 0.85; }
+      @keyframes spell-wave-pulse {
+        0%, 100% { 
+          text-decoration-color: #f87171;
+          filter: drop-shadow(0 0 0px rgba(248, 113, 113, 0));
+        }
+        50% { 
+          text-decoration-color: #ef4444;
+          filter: drop-shadow(0 0 2px rgba(239, 68, 68, 0.3));
+        }
       }
 
       /* Magic Animations */

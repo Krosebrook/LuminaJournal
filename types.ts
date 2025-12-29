@@ -5,7 +5,7 @@ export interface FileAttachment {
   data: string; // base64
 }
 
-export type WritingTone = 'creative' | 'professional' | 'punchy' | 'academic' | 'casual';
+export type WritingTone = 'creative' | 'professional' | 'punchy' | 'academic' | 'casual' | 'memoir';
 
 export interface UserProfile {
   id?: number;

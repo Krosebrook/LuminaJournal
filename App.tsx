@@ -11,6 +11,7 @@ const App: React.FC = () => {
   const [content, setContent] = useState('');
   const [tone, setTone] = useState<WritingTone>('creative');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -34,11 +35,31 @@ const App: React.FC = () => {
     load();
   }, []);
 
-  // Persist to Dexie
+  // Debounced Auto-save to Dexie
   useEffect(() => {
-    if (content) {
-      db.drafts.put({ id: 1, title: 'Current Draft', content, tone, updatedAt: Date.now() });
-    }
+    // We don't want to auto-save if content is totally empty on first load
+    // but if the user clears the editor, we should save that state.
+    const saveTimeout = setTimeout(async () => {
+      if (content !== undefined) {
+        setIsSaving(true);
+        try {
+          await db.drafts.put({ 
+            id: 1, 
+            title: 'Current Draft', 
+            content, 
+            tone, 
+            updatedAt: Date.now() 
+          });
+        } catch (error) {
+          console.error("Auto-save failed:", error);
+        } finally {
+          // Subtle delay so the "Saving" state is actually perceptible
+          setTimeout(() => setIsSaving(false), 500);
+        }
+      }
+    }, 1000); // 1 second debounce
+
+    return () => clearTimeout(saveTimeout);
   }, [content, tone]);
 
   // Close export menu when clicking outside
@@ -199,7 +220,12 @@ const App: React.FC = () => {
       </main>
 
       <div className="fixed bottom-12 left-16 flex items-center gap-10 z-30">
-        <div className="flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${isProcessing ? 'bg-blue-600 animate-ping' : 'bg-green-500'}`}></div><span className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em]">{isProcessing ? 'Gemini Active' : 'Offline Persist Ready'}</span></div>
+        <div className="flex items-center gap-3">
+          <div className={`w-2 h-2 rounded-full ${isProcessing ? 'bg-blue-600 animate-ping' : isSaving ? 'bg-amber-500 animate-pulse' : 'bg-green-500'}`}></div>
+          <span className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em]">
+            {isProcessing ? 'Gemini Active' : isSaving ? 'Saving Draft...' : 'Offline Persist Ready'}
+          </span>
+        </div>
         <div className="flex items-center gap-2 border-l border-gray-200 pl-10">
           <button onClick={undo} disabled={historyIndex <= 0} className="p-2 opacity-100 disabled:opacity-20 hover:scale-110 active:scale-90 transition-all"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path></svg></button>
           <button onClick={redo} disabled={historyIndex >= history.length - 1} className="p-2 opacity-100 disabled:opacity-20 hover:scale-110 active:scale-90 transition-all"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 10h-10a8 8 0 00-8 8v2m18-8l-6 6m6-6l-6-6"></path></svg></button>

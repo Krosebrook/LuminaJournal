@@ -1,18 +1,27 @@
 
 {
-  "id": "com.lumina.writing.v4",
-  "name": "Lumina - Magic Writing Partner",
+  "id": "com.lumina.writing.v1",
+  "name": "Lumina: The Magic Writing Partner",
   "short_name": "Lumina",
-  "description": "An intelligent writing workspace with native AI collaboration and professional drafting tools.",
+  "description": "An AI-powered writing workspace and memoirist companion designed to help you unearth deep memories and craft authentic life stories through sensory immersion and emotional resonance.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
+  "display_override": [
+    "window-controls-overlay",
+    "minimal-ui"
+  ],
   "background_color": "#fafafa",
   "theme_color": "#0f172a",
   "orientation": "any",
   "dir": "ltr",
   "lang": "en-US",
-  "categories": ["productivity", "writing", "utilities"],
+  "categories": [
+    "productivity",
+    "books",
+    "lifestyle",
+    "utilities"
+  ],
   "icons": [
     {
       "src": "https://img.icons8.com/fluency/192/000000/sparkling-diamond.png",
@@ -39,23 +48,40 @@
       "sizes": "1200x800",
       "type": "image/jpeg",
       "form_factor": "wide",
-      "label": "The ultimate minimalist writing experience."
+      "label": "Deep Writing Mode: Focus on your narrative while Lumina handles the resonance."
     },
     {
       "src": "https://images.unsplash.com/photo-1517842645767-c639042777db?auto=format&fit=crop&q=80&w=750&h=1334",
       "sizes": "750x1334",
       "type": "image/jpeg",
       "form_factor": "narrow",
-      "label": "Mobile-ready thought partner."
+      "label": "Memory Excavation: Use the terminal to unearth sensory details from your past."
     }
   ],
   "shortcuts": [
     {
-      "name": "New Session",
+      "name": "New Memoir Chapter",
       "short_name": "New",
-      "description": "Open a fresh writing canvas",
+      "description": "Start a fresh writing session",
       "url": "./",
-      "icons": [{ "src": "https://img.icons8.com/fluency/96/000000/plus.png", "sizes": "96x96" }]
+      "icons": [
+        {
+          "src": "https://img.icons8.com/fluency/96/000000/plus.png",
+          "sizes": "96x96"
+        }
+      ]
+    },
+    {
+      "name": "Neural Terminal",
+      "short_name": "Terminal",
+      "description": "Access raw AI power for brainstorming",
+      "url": "./?tab=terminal",
+      "icons": [
+        {
+          "src": "https://img.icons8.com/fluency/96/000000/console.png",
+          "sizes": "96x96"
+        }
+      ]
     }
   ],
   "prefer_related_applications": false
