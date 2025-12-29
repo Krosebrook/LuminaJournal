@@ -7,6 +7,14 @@ export interface FileAttachment {
 
 export type WritingTone = 'creative' | 'professional' | 'punchy' | 'academic' | 'casual';
 
+export interface UserProfile {
+  id?: number;
+  name: string;
+  tone: WritingTone;
+  systemInstruction: string;
+  isDefault: boolean;
+}
+
 export interface Suggestion {
   id: string;
   type: 'improvement' | 'grammar' | 'expansion' | 'critique';

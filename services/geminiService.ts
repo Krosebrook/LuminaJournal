@@ -34,18 +34,21 @@ export const generateDraftStream = async (
   prompt: string, 
   attachments: FileAttachment[], 
   tone: WritingTone,
-  onChunk: (text: string) => void
+  onChunk: (text: string) => void,
+  customSystemInstruction?: string
 ) => {
   const ai = getAIClient();
   const parts: any[] = [{ text: `TONE: ${TONE_INSTRUCTIONS[tone]}\n\nGOAL: ${prompt}` }];
   parts.push(...prepareAttachments(attachments));
 
-  // Aligned with single-turn content object format
+  const baseInstruction = "You are an elite writing partner. Produce clean, structured text only.";
+  const finalInstruction = customSystemInstruction ? `${baseInstruction} ${customSystemInstruction}` : baseInstruction;
+
   const result = await ai.models.generateContentStream({
     model: 'gemini-3-pro-preview',
     contents: { parts },
     config: {
-      systemInstruction: "You are an elite writing partner. Produce clean, structured text only.",
+      systemInstruction: finalInstruction,
     },
   });
 
@@ -67,7 +70,6 @@ export const rewriteSelectionStream = async (
   onChunk: (text: string) => void
 ) => {
   const ai = getAIClient();
-  // Aligned with single-turn content object format
   const result = await ai.models.generateContentStream({
     model: 'gemini-3-flash-preview',
     contents: { parts: [{ text: `CONTEXT: ${fullContent}\nREWRITE: "${selection}"\nREQUEST: ${feedback}` }] },
@@ -87,11 +89,11 @@ export const rewriteSelectionStream = async (
 /**
  * TERMINAL RAW EXECUTION
  */
-export const executeRawTerminalPrompt = async (prompt: string): Promise<string> => {
+export const executeRawTerminalPrompt = async (prompt: string, modelName: string = 'gemini-3-pro-preview'): Promise<string> => {
   const ai = getAIClient();
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: modelName,
       contents: prompt,
     });
     return response.text || "No response received.";
@@ -132,10 +134,18 @@ export const chatWithContext = async (
   content: string,
   history: ChatMessage[],
   message: string,
-  onChunk: (text: string) => void
+  onChunk: (text: string) => void,
+  customSystemInstruction?: string
 ) => {
   const ai = getAIClient();
-  const chat = ai.chats.create({ model: 'gemini-3-flash-preview' });
+  const baseInstruction = "You are a helpful writing assistant.";
+  const finalInstruction = customSystemInstruction ? `${baseInstruction} ${customSystemInstruction}` : baseInstruction;
+  
+  const chat = ai.chats.create({ 
+    model: 'gemini-3-flash-preview',
+    config: { systemInstruction: finalInstruction }
+  });
+  
   const result = await chat.sendMessageStream({ message: `DOC: ${content}\nUSER: ${message}` });
   let fullText = "";
   for await (const chunk of result) {

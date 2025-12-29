@@ -1,6 +1,5 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-// Fixed: Removed non-existent import getSpellingCorrections
 import { rewriteSelectionStream, getProactiveSuggestions } from '../services/geminiService';
 import { Suggestion, WritingTone, Comment } from '../types';
 
@@ -56,6 +55,7 @@ const Editor: React.FC<EditorProps> = ({
   const [commentText, setCommentText] = useState('');
   
   const [hoveredSuggestion, setHoveredSuggestion] = useState<{ s: Suggestion, rect: DOMRect } | null>(null);
+  const [hoveredComment, setHoveredComment] = useState<{ c: Comment, rect: DOMRect } | null>(null);
   const [hoveredCommentId, setHoveredCommentId] = useState<string | null>(null);
   const [showMarginNotes, setShowMarginNotes] = useState(true);
 
@@ -96,7 +96,6 @@ const Editor: React.FC<EditorProps> = ({
   // Effect to update DOM when content state changes (e.g. from AI)
   useEffect(() => {
     if (editorRef.current && !isInternalUpdate.current) {
-      // If AI is streaming OR editor is NOT focused, force update the DOM
       const isFocused = document.activeElement === editorRef.current;
       if (isProcessing || !isFocused) {
         editorRef.current.innerHTML = highlightedContent;
@@ -114,7 +113,7 @@ const Editor: React.FC<EditorProps> = ({
 
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
     const newText = e.currentTarget.innerText;
-    isInternalUpdate.current = true; // Mark as user-initiated update
+    isInternalUpdate.current = true;
     onChange(newText);
   };
 
@@ -205,12 +204,19 @@ const Editor: React.FC<EditorProps> = ({
       const suggestion = suggestions.find(s => s.id === id);
       if (suggestion) setHoveredSuggestion({ s: suggestion, rect: suggestionSpan.getBoundingClientRect() });
       setHoveredCommentId(null);
+      setHoveredComment(null);
     } else if (commentSpan) {
-      setHoveredCommentId(commentSpan.getAttribute('data-comment-id'));
+      const id = commentSpan.getAttribute('data-comment-id');
+      const comment = comments.find(c => c.id === id);
+      if (comment) {
+        setHoveredComment({ c: comment, rect: commentSpan.getBoundingClientRect() });
+        setHoveredCommentId(id);
+      }
       setHoveredSuggestion(null);
     } else {
       setHoveredSuggestion(null);
       setHoveredCommentId(null);
+      setHoveredComment(null);
     }
   };
 
@@ -245,6 +251,12 @@ const Editor: React.FC<EditorProps> = ({
     setIsCommenting(false);
   };
 
+  const deleteComment = (id: string) => {
+    const newComments = comments.filter(c => c.id !== id);
+    setComments(newComments);
+    pushToHistory(content, suggestions, newComments);
+  };
+
   const renderTypeIcon = (type: string, size: string = "w-5 h-5") => {
     if (type === 'critique') return <svg className={`${size} text-amber-500`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>;
     if (type === 'grammar') return <svg className={`${size} text-emerald-500`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>;
@@ -254,7 +266,7 @@ const Editor: React.FC<EditorProps> = ({
   return (
     <div className={`relative flex gap-12 max-w-[1400px] mx-auto py-32 px-12 min-h-screen transition-all duration-700 ${isFlashing ? 'bg-blue-50/50 ring-8 ring-blue-500/10' : ''}`} onMouseMove={handleMouseMove}>
       
-      {/* TOOLTIPS */}
+      {/* SUGGESTION TOOLTIP */}
       {hoveredSuggestion && (
         <div className="fixed z-[60] glass px-5 py-3.5 rounded-2xl shadow-xl border border-white/50 pointer-events-none animate-in fade-in zoom-in duration-200"
           style={{ top: hoveredSuggestion.rect.top + window.scrollY - 70, left: hoveredSuggestion.rect.left + (hoveredSuggestion.rect.width / 2) - 100, maxWidth: '240px' }}>
@@ -263,7 +275,19 @@ const Editor: React.FC<EditorProps> = ({
         </div>
       )}
 
-      {/* EDITOR */}
+      {/* COMMENT TOOLTIP */}
+      {hoveredComment && (
+        <div className="fixed z-[60] glass px-5 py-3.5 rounded-2xl shadow-xl border border-amber-200 pointer-events-none animate-in fade-in zoom-in duration-200"
+          style={{ top: hoveredComment.rect.top + window.scrollY - 80, left: hoveredComment.rect.left + (hoveredComment.rect.width / 2) - 120, maxWidth: '240px' }}>
+          <div className="flex items-center gap-2 mb-1.5">
+            <svg className="w-3.5 h-3.5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path></svg>
+            <span className="text-[9px] font-black uppercase tracking-widest text-amber-600/80">Margin Note</span>
+          </div>
+          <p className="text-[11px] text-gray-700 font-medium">{hoveredComment.c.text}</p>
+        </div>
+      )}
+
+      {/* EDITOR MAIN AREA */}
       <div className="flex-1 relative group">
         <div
           ref={editorRef}
@@ -280,29 +304,53 @@ const Editor: React.FC<EditorProps> = ({
         )}
       </div>
 
-      {/* SIDEBARS & MENUS */}
+      {/* DEDICATED SIDEBAR PANEL FOR COMMENTS */}
       {comments.length > 0 && showMarginNotes && (
-        <aside className="w-80 h-fit sticky top-32 transition-all">
-          <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-400 mb-6">Margin Notes</h3>
+        <aside className="w-80 h-fit sticky top-32 transition-all shrink-0">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-400">Margin Notes</h3>
+            <span className="bg-amber-100 text-amber-700 text-[9px] font-bold px-2 py-0.5 rounded-full">{comments.length}</span>
+          </div>
           <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
             {comments.map(c => (
-              <div key={c.id} className={`glass p-5 rounded-3xl border transition-all ${hoveredCommentId === c.id ? 'border-amber-300 shadow-xl' : 'border-gray-100'}`}>
-                <p className="text-sm font-medium text-gray-800">{c.text}</p>
-                <p className="text-[10px] text-gray-400 mt-2 italic">"{c.originalText}"</p>
+              <div 
+                key={c.id} 
+                className={`glass p-5 rounded-3xl border transition-all relative group/item ${hoveredCommentId === c.id ? 'border-amber-300 shadow-xl bg-amber-50/40' : 'border-gray-100'}`}
+                onMouseEnter={() => setHoveredCommentId(c.id)}
+                onMouseLeave={() => setHoveredCommentId(null)}
+              >
+                <div className="flex justify-between items-start mb-2">
+                  <p className="text-sm font-semibold text-gray-800 leading-snug">{c.text}</p>
+                  <button 
+                    onClick={() => deleteComment(c.id)}
+                    className="opacity-0 group-hover/item:opacity-100 text-gray-300 hover:text-red-500 transition-all p-1"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12"></path></svg>
+                  </button>
+                </div>
+                <p className="text-[10px] text-gray-400 mt-2 italic border-l-2 border-gray-100 pl-2">"{c.originalText}"</p>
+                <div className="mt-3 text-[8px] font-black text-gray-300 uppercase tracking-widest">{new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
               </div>
             ))}
           </div>
         </aside>
       )}
 
-      {/* SELECTION POPUP */}
+      {/* SELECTION POPUP MENU */}
       {selection.rect && (
         <div id="iteration-box" className="fixed z-50 glass rounded-[2.5rem] shadow-2xl p-6 flex flex-col gap-4 animate-in fade-in zoom-in border border-white"
           style={{ top: selection.rect.top + window.scrollY - (isCommenting ? 150 : 220), left: Math.max(20, Math.min(window.innerWidth - 380, selection.rect.left + (selection.rect.width / 2) - 180)), width: '360px' }}>
           {isCommenting ? (
             <div className="flex flex-col gap-3">
-              <input autoFocus value={commentText} onChange={(e) => setCommentText(e.target.value)} placeholder="Add a note..." className="w-full bg-amber-50/30 border border-amber-100 rounded-2xl py-3 px-4 text-sm outline-none" onKeyDown={(e) => e.key === 'Enter' && handleAddComment()} />
-              <button onClick={handleAddComment} className="bg-amber-500 text-white rounded-xl py-2 text-xs font-black uppercase tracking-widest">Post Note</button>
+              <div className="flex items-center gap-2 mb-1">
+                <svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                <span className="text-[10px] font-black uppercase tracking-widest text-amber-600">New Margin Note</span>
+              </div>
+              <input autoFocus value={commentText} onChange={(e) => setCommentText(e.target.value)} placeholder="What are your thoughts on this section?" className="w-full bg-amber-50/30 border border-amber-100 rounded-2xl py-3 px-4 text-sm outline-none focus:ring-2 ring-amber-200 transition-all" onKeyDown={(e) => e.key === 'Enter' && handleAddComment()} />
+              <div className="flex gap-2">
+                <button onClick={() => setIsCommenting(false)} className="flex-1 py-2 text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-gray-600 transition-all">Cancel</button>
+                <button onClick={handleAddComment} className="flex-[2] bg-amber-500 text-white rounded-xl py-2 text-[10px] font-black uppercase tracking-widest shadow-lg shadow-amber-500/20 active:scale-95 transition-all">Post Note</button>
+              </div>
             </div>
           ) : (
             <>
@@ -312,10 +360,13 @@ const Editor: React.FC<EditorProps> = ({
                 ))}
               </div>
               <div className="relative">
-                <input value={feedback} onChange={(e) => setFeedback(e.target.value)} placeholder="Custom instructions..." className="w-full bg-white border border-gray-100 rounded-2xl py-3 px-4 text-sm outline-none pr-10" onKeyDown={(e) => e.key === 'Enter' && handleRewrite()} />
-                <button onClick={() => handleRewrite()} className="absolute right-2 top-1/2 -translate-y-1/2 text-blue-600"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M13 7l5 5m0 0l-5 5m5-5H6"></path></svg></button>
+                <input value={feedback} onChange={(e) => setFeedback(e.target.value)} placeholder="Custom instructions..." className="w-full bg-white border border-gray-100 rounded-2xl py-3 px-4 text-sm outline-none pr-10 focus:ring-2 ring-blue-100 transition-all" onKeyDown={(e) => e.key === 'Enter' && handleRewrite()} />
+                <button onClick={() => handleRewrite()} className="absolute right-2 top-1/2 -translate-y-1/2 text-blue-600 hover:scale-110 transition-all"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M13 7l5 5m0 0l-5 5m5-5H6"></path></svg></button>
               </div>
-              <button onClick={() => setIsCommenting(true)} className="text-[9px] font-black uppercase text-amber-600 text-center">Add Comment Instead</button>
+              <button onClick={() => setIsCommenting(true)} className="flex items-center justify-center gap-2 text-[9px] font-black uppercase text-amber-600 text-center py-2 hover:bg-amber-50 rounded-xl transition-all">
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path></svg>
+                Add Margin Note
+              </button>
             </>
           )}
         </div>

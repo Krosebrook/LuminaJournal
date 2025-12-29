@@ -1,6 +1,6 @@
 
-import Dexie, { Table } from 'https://esm.sh/dexie@^4.0.1';
-import { WritingTone, Suggestion, Comment } from '../types';
+import Dexie, { type Table } from 'https://esm.sh/dexie@^4.0.1';
+import { WritingTone, UserProfile } from '../types';
 
 export interface Draft {
   id?: number;
@@ -21,18 +21,18 @@ export interface TerminalLog {
 /**
  * Lumina Database implementation using Dexie.
  */
-export class LuminaDB extends Dexie {
-  drafts!: Table<Draft>;
-  terminalLogs!: Table<TerminalLog>;
+const db = new Dexie('LuminaDB') as Dexie & {
+  drafts: Table<Draft>;
+  terminalLogs: Table<TerminalLog>;
+  profiles: Table<UserProfile>;
+};
 
-  constructor() {
-    super('LuminaDB');
-    // Fixed: version method is inherited from Dexie base class.
-    this.version(1).stores({
-      drafts: '++id, title, updatedAt',
-      terminalLogs: '++id, timestamp'
-    });
-  }
-}
+// Initialize the database schema and versioning.
+// Version 2 adds the profiles table.
+db.version(2).stores({
+  drafts: '++id, title, updatedAt',
+  terminalLogs: '++id, timestamp',
+  profiles: '++id, name, isDefault'
+});
 
-export const db = new LuminaDB();
+export { db };
