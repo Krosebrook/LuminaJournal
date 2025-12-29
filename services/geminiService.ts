@@ -1,14 +1,7 @@
 
-/**
- * Lumina Intelligence Service
- * Core logic for document generation, surgical editing, and proactive analysis.
- * Utilizes a hybrid Gemini 3 architecture for optimal latency/quality trade-offs.
- */
-
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { FileAttachment, WritingTone, ChatMessage } from "../types";
 
-// Standardizing initialization to ensure thread safety
 const getAIClient = () => {
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
@@ -22,12 +15,21 @@ const TONE_INSTRUCTIONS: Record<WritingTone, string> = {
 };
 
 /**
- * Generates a full document draft using the Pro model for high reasoning depth.
- * @param prompt The user's narrative direction
- * @param attachments Supporting documentation/images
- * @param tone The selected sonic profile
- * @param onChunk Callback for streaming tokens
+ * GEMINI SUPPORTED MIME TYPES:
+ * image/png, image/jpeg, image/webp, image/heic, image/heif, application/pdf
  */
+const prepareAttachments = (attachments: FileAttachment[]) => {
+  const supportedTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
+  return attachments
+    .filter(file => supportedTypes.includes(file.type))
+    .map(file => ({
+      inlineData: {
+        mimeType: file.type,
+        data: file.data.includes(',') ? file.data.split(',')[1] : file.data
+      }
+    }));
+};
+
 export const generateDraftStream = async (
   prompt: string, 
   attachments: FileAttachment[], 
@@ -35,41 +37,28 @@ export const generateDraftStream = async (
   onChunk: (text: string) => void
 ) => {
   const ai = getAIClient();
-  const parts: any[] = [{ text: `TONE: ${TONE_INSTRUCTIONS[tone]}\n\nPROMPT: ${prompt}` }];
+  const parts: any[] = [{ text: `TONE: ${TONE_INSTRUCTIONS[tone]}\n\nGOAL: ${prompt}` }];
+  parts.push(...prepareAttachments(attachments));
 
-  // Inject multi-modal context if provided
-  attachments.forEach(file => {
-    parts.push({
-      inlineData: {
-        mimeType: file.type,
-        data: file.data.split(',')[1] || file.data
-      }
-    });
-  });
-
+  // Aligned with single-turn content object format
   const result = await ai.models.generateContentStream({
     model: 'gemini-3-pro-preview',
     contents: { parts },
     config: {
-      systemInstruction: "You are an elite writing partner. Produce only the requested content. No conversational filler. Integrate facts from attachments deeply.",
-      thinkingConfig: { thinkingBudget: 4000 }
+      systemInstruction: "You are an elite writing partner. Produce clean, structured text only.",
     },
   });
 
   let fullText = "";
   for await (const chunk of result) {
-    const text = chunk.text;
-    if (text) {
-      fullText += text;
+    if (chunk.text) {
+      fullText += chunk.text;
       onChunk(fullText);
     }
   }
   return fullText;
 };
 
-/**
- * Surgical rewrite of selected text using Flash for sub-second latency.
- */
 export const rewriteSelectionStream = async (
   fullContent: string, 
   selection: string, 
@@ -78,28 +67,17 @@ export const rewriteSelectionStream = async (
   onChunk: (text: string) => void
 ) => {
   const ai = getAIClient();
-  const prompt = `
-    CONTEXT: ${fullContent}
-    TARGET: "${selection}"
-    FEEDBACK: "${feedback}"
-    TONE: ${TONE_INSTRUCTIONS[tone]}
-    
-    Rewrite ONLY the TARGET. Fit the CONTEXT. Return only the revised text.
-  `;
-
+  // Aligned with single-turn content object format
   const result = await ai.models.generateContentStream({
     model: 'gemini-3-flash-preview',
-    contents: prompt,
-    config: {
-      systemInstruction: "You are a surgical editor. Replace text while maintaining perfect contextual continuity.",
-    },
+    contents: { parts: [{ text: `CONTEXT: ${fullContent}\nREWRITE: "${selection}"\nREQUEST: ${feedback}` }] },
+    config: { systemInstruction: "Rewrite ONLY the selection. Maintain context." },
   });
 
   let fullText = "";
   for await (const chunk of result) {
-    const text = chunk.text;
-    if (text) {
-      fullText += text;
+    if (chunk.text) {
+      fullText += chunk.text;
       onChunk(fullText);
     }
   }
@@ -107,81 +85,49 @@ export const rewriteSelectionStream = async (
 };
 
 /**
- * Proactively scans content for structural and stylistic improvements.
+ * TERMINAL RAW EXECUTION
  */
+export const executeRawTerminalPrompt = async (prompt: string): Promise<string> => {
+  const ai = getAIClient();
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: prompt,
+    });
+    return response.text || "No response received.";
+  } catch (e: any) {
+    return `Error: ${e.message || JSON.stringify(e)}`;
+  }
+};
+
 export const getProactiveSuggestions = async (content: string, tone: WritingTone): Promise<any[]> => {
   if (!content || content.length < 50) return [];
-
   const ai = getAIClient();
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: `Content: "${content}"\nTone: ${tone}`,
-    config: {
-      systemInstruction: "Identify two critical segments for improvement. One structural, one phrasing. Return as JSON.",
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            originalText: { type: Type.STRING },
-            suggestedText: { type: Type.STRING },
-            explanation: { type: Type.STRING },
-            type: { type: Type.STRING, enum: ['improvement', 'grammar', 'expansion', 'critique'] }
-          },
-          required: ["originalText", "suggestedText", "explanation", "type"]
-        }
-      }
-    },
-  });
-
   try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: `Suggest improvements for: "${content}"`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              originalText: { type: Type.STRING },
+              suggestedText: { type: Type.STRING },
+              explanation: { type: Type.STRING },
+              type: { type: Type.STRING, enum: ['improvement', 'grammar', 'expansion', 'critique'] }
+            },
+            required: ["originalText", "suggestedText", "explanation", "type"]
+          }
+        }
+      },
+    });
     return JSON.parse(response.text || "[]");
-  } catch (e) {
-    return [];
-  }
+  } catch (e) { return []; }
 };
 
-/**
- * Scans text for linguistic errors and returns corrections.
- */
-export const getSpellingCorrections = async (content: string): Promise<any[]> => {
-  if (!content || content.length < 5) return [];
-
-  const ai = getAIClient();
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: `Scan for errors: "${content}"`,
-    config: {
-      systemInstruction: "Identify misspelled words. Return JSON array of {word, corrections}.",
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            word: { type: Type.STRING },
-            corrections: { 
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            }
-          },
-          required: ["word", "corrections"]
-        }
-      }
-    },
-  });
-
-  try {
-    return JSON.parse(response.text || "[]");
-  } catch (e) {
-    return [];
-  }
-};
-
-/**
- * Chat-based counsel for brainstorming or research queries.
- */
 export const chatWithContext = async (
   content: string,
   history: ChatMessage[],
@@ -189,21 +135,12 @@ export const chatWithContext = async (
   onChunk: (text: string) => void
 ) => {
   const ai = getAIClient();
-  const chat = ai.chats.create({
-    model: 'gemini-3-flash-preview',
-    config: {
-      systemInstruction: "You are a writing assistant. Use the document content for context. Help brainstorm or critique.",
-    }
-  });
-
-  const fullPrompt = `DOC:\n${content}\n\nUSER: ${message}`;
-  const result = await chat.sendMessageStream({ message: fullPrompt });
-  
+  const chat = ai.chats.create({ model: 'gemini-3-flash-preview' });
+  const result = await chat.sendMessageStream({ message: `DOC: ${content}\nUSER: ${message}` });
   let fullText = "";
   for await (const chunk of result) {
-    const text = chunk.text;
-    if (text) {
-      fullText += text;
+    if (chunk.text) {
+      fullText += chunk.text;
       onChunk(fullText);
     }
   }
