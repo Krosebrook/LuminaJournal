@@ -80,10 +80,11 @@ const Editor: React.FC<EditorProps> = ({
 
     suggestions.forEach((s) => {
       const escaped = s.originalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Updated Quick Accept Trigger: Green color, better icon, explicit styling to override defaults if needed
       const replacement = `
         <span class="ai-suggestion" data-suggestion-id="${s.id}">
-          ${s.originalText}<span class="quick-accept-trigger" data-quick-accept="${s.id}" contenteditable="false" title="Accept Suggestion">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          ${s.originalText}<span class="quick-accept-trigger" data-quick-accept="${s.id}" contenteditable="false" title="Accept Suggestion" style="background-color: #10b981;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;"><polyline points="20 6 9 17 4 12"></polyline></svg>
           </span>
         </span>`.trim();
       html = html.replace(new RegExp(escaped, 'g'), replacement);
@@ -155,9 +156,17 @@ const Editor: React.FC<EditorProps> = ({
       const newSuggestions = suggestions.filter(x => x.id !== s.id);
       onChange(newContent);
       setSuggestions(newSuggestions);
+      setHoveredSuggestion(null);
       pushToHistory(newContent, newSuggestions, comments);
     }
   }, [content, suggestions, comments, onChange, setSuggestions, pushToHistory]);
+
+  const rejectSuggestion = useCallback((s: Suggestion) => {
+    const newSuggestions = suggestions.filter(x => x.id !== s.id);
+    setSuggestions(newSuggestions);
+    setHoveredSuggestion(null);
+    // Optionally push to history if dismissal is considered a state change worth undoing
+  }, [suggestions, setSuggestions]);
 
   const applyCorrection = (errorId: string, correction: string) => {
     const err = spellErrors.find(e => e.id === errorId);
@@ -229,11 +238,19 @@ const Editor: React.FC<EditorProps> = ({
 
   const handleMouseMove = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
+
+    // optimization: if we are over the tooltip, keep the state
+    if (target.closest('.suggestion-tooltip')) return;
+
     const suggestionSpan = target.closest('.ai-suggestion') as HTMLElement;
     const commentSpan = target.closest('.user-comment') as HTMLElement;
     
     if (suggestionSpan) {
       const id = suggestionSpan.getAttribute('data-suggestion-id');
+      
+      // Optimization: Avoid re-setting state if same suggestion
+      if (hoveredSuggestion?.s.id === id) return;
+
       const suggestion = suggestions.find(s => s.id === id);
       if (suggestion) setHoveredSuggestion({ s: suggestion, rect: suggestionSpan.getBoundingClientRect() });
       setHoveredCommentId(null);
@@ -247,6 +264,9 @@ const Editor: React.FC<EditorProps> = ({
       }
       setHoveredSuggestion(null);
     } else {
+      // Clear only if we are not traversing the gap between span and tooltip
+      // Since we can't easily detect the "intent" to go to tooltip, 
+      // we rely on the user moving mouse directly.
       setHoveredSuggestion(null);
       setHoveredCommentId(null);
       setHoveredComment(null);
@@ -301,10 +321,27 @@ const Editor: React.FC<EditorProps> = ({
       
       {/* SUGGESTION TOOLTIP */}
       {hoveredSuggestion && (
-        <div className="fixed z-[60] glass px-5 py-3.5 rounded-2xl shadow-xl border border-white/50 pointer-events-none animate-in fade-in zoom-in duration-200"
-          style={{ top: hoveredSuggestion.rect.top + window.scrollY - 70, left: hoveredSuggestion.rect.left + (hoveredSuggestion.rect.width / 2) - 100, maxWidth: '240px' }}>
-          <div className="flex items-center gap-2 mb-1.5">{renderTypeIcon(hoveredSuggestion.s.type, "w-3.5 h-3.5")}<span className="text-[9px] font-black uppercase tracking-widest text-blue-600/80">Suggestion</span></div>
-          <p className="text-[11px] text-gray-700 font-medium">{hoveredSuggestion.s.explanation}</p>
+        <div 
+          className="suggestion-tooltip fixed z-[60] glass px-5 py-3.5 rounded-2xl shadow-xl border border-white/50 animate-in fade-in zoom-in duration-200 pointer-events-auto flex flex-col gap-3"
+          style={{ top: hoveredSuggestion.rect.top + window.scrollY - 90, left: hoveredSuggestion.rect.left + (hoveredSuggestion.rect.width / 2) - 100, maxWidth: '260px' }}
+        >
+          <div className="flex items-center gap-2 mb-0.5">{renderTypeIcon(hoveredSuggestion.s.type, "w-3.5 h-3.5")}<span className="text-[9px] font-black uppercase tracking-widest text-blue-600/80">Suggestion</span></div>
+          <p className="text-[11px] text-gray-700 font-medium leading-relaxed">{hoveredSuggestion.s.explanation}</p>
+          <div className="flex gap-2 pt-2 border-t border-blue-50">
+            <button 
+              onClick={() => applySuggestion(hoveredSuggestion.s)}
+              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold uppercase tracking-widest py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+              Apply
+            </button>
+            <button 
+              onClick={() => rejectSuggestion(hoveredSuggestion.s)}
+              className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-700 text-[10px] font-bold uppercase tracking-widest py-1.5 rounded-lg transition-colors"
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
 

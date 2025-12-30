@@ -11,13 +11,45 @@ const EXAMPLES = [
   { label: 'Emotional Depth', text: 'Analyze this paragraph for emotional honesty. Where am I "telling" instead of "showing" my feelings?' }
 ];
 
+// --- Encryption Utilities ---
+const CIPHER_SALT = 'LUMINA_NEURAL_CORE_v1';
+
+const encryptValue = (text: string): string => {
+  const textChars = text.split('').map(c => c.charCodeAt(0));
+  const saltChars = CIPHER_SALT.split('').map(c => c.charCodeAt(0));
+  const encrypted = textChars.map((char, i) => 
+    char ^ saltChars[i % saltChars.length]
+  );
+  return btoa(String.fromCharCode(...encrypted));
+};
+
+const decryptValue = (cipher: string): string => {
+  try {
+    const raw = atob(cipher);
+    const rawChars = raw.split('').map(c => c.charCodeAt(0));
+    const saltChars = CIPHER_SALT.split('').map(c => c.charCodeAt(0));
+    const decrypted = rawChars.map((char, i) => 
+      char ^ saltChars[i % saltChars.length]
+    );
+    return String.fromCharCode(...decrypted);
+  } catch (e) { return '*** CORRUPTED ***'; }
+};
+
+interface StoredKey {
+  id: string;
+  name: string;
+  value: string; // Encrypted
+  created: number;
+}
+
 interface FormattedOutputProps {
   content: string;
   type: 'request' | 'response' | 'error';
 }
 
 const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type }) => {
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isJsonExpanded, setIsJsonExpanded] = useState(false);
+  const [isTextExpanded, setIsTextExpanded] = useState(false);
   
   // Try to detect if it's JSON
   let isJson = false;
@@ -37,7 +69,11 @@ const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type }) => {
 
   if (isJson && type === 'response') {
     const jsonString = JSON.stringify(jsonParsed, null, 2);
-    // Basic syntax highlighting for JSON
+    const lineCount = jsonString.split('\n').length;
+    // Consider it "long" if it has more than 8 lines
+    const isLongJson = lineCount > 8;
+
+    // Syntax highlighting for JSON
     const highlightedJson = jsonString
       .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, (match) => {
         let cls = 'text-pink-300'; // Numbers/Booleans
@@ -55,22 +91,46 @@ const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type }) => {
         return `<span class="${cls}">${match}</span>`;
       });
 
+    // Generate a concise summary
+    const getSummary = () => {
+        if (Array.isArray(jsonParsed)) {
+            const firstItem = jsonParsed[0];
+            const itemType = typeof firstItem;
+            return `Array(${jsonParsed.length}) [ ${itemType === 'object' ? '{...}' : itemType}, ... ]`;
+        }
+        if (typeof jsonParsed === 'object' && jsonParsed !== null) {
+            const keys = Object.keys(jsonParsed);
+            const preview = keys.slice(0, 3).join(', ');
+            return `Object { ${preview}${keys.length > 3 ? ', ...' : ''} }`;
+        }
+        return 'JSON Data';
+    };
+
     return (
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-3">
-          <span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded font-black uppercase tracking-widest">Data Structure</span>
-          <button 
-            onClick={() => setIsCollapsed(!isCollapsed)}
-            className="text-[9px] text-white/40 hover:text-white transition-colors uppercase tracking-widest underline decoration-white/20"
-          >
-            {isCollapsed ? 'Expand' : 'Collapse'}
-          </button>
+          <span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded font-black uppercase tracking-widest">JSON Data</span>
+          {isLongJson && (
+            <button 
+                onClick={() => setIsJsonExpanded(!isJsonExpanded)}
+                className="text-[9px] text-white/40 hover:text-white transition-colors uppercase tracking-widest underline decoration-white/20"
+            >
+                {isJsonExpanded ? 'Collapse' : 'Expand View'}
+            </button>
+          )}
         </div>
-        {!isCollapsed && (
+        {(!isLongJson || isJsonExpanded) ? (
           <pre 
-            className="p-4 bg-white/5 rounded-xl border border-white/5 overflow-x-auto custom-scrollbar font-light leading-relaxed"
+            className="p-4 bg-white/5 rounded-xl border border-white/5 overflow-x-auto custom-scrollbar font-light leading-relaxed text-[11px]"
             dangerouslySetInnerHTML={{ __html: highlightedJson }}
           />
+        ) : (
+            <div 
+                onClick={() => setIsJsonExpanded(true)}
+                className="p-3 bg-white/5 rounded-xl border border-white/5 text-emerald-500/60 text-xs font-mono cursor-pointer hover:bg-white/10 transition-colors flex items-center gap-2"
+            >
+                <span className="text-blue-400">ℹ️</span> {getSummary()}
+            </div>
         )}
       </div>
     );
@@ -101,10 +161,48 @@ const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type }) => {
               </div>
             );
           }
+          if (!part.trim()) return null;
           return <div key={i} className="whitespace-pre-wrap font-light opacity-90">{part}</div>;
         })}
       </div>
     );
+  }
+
+  // Handle plain long text responses
+  const CHAR_LIMIT = 350;
+  const isLongText = content.length > CHAR_LIMIT;
+  
+  if (type === 'response') {
+      return (
+          <div className="group">
+             <div className={`whitespace-pre-wrap font-light break-words transition-all ${!isTextExpanded && isLongText ? 'opacity-80' : 'opacity-100'}`}>
+                {(!isTextExpanded && isLongText) ? (
+                    <>
+                        {content.slice(0, CHAR_LIMIT)}
+                        <span className="opacity-40">...</span>
+                    </>
+                ) : content}
+            </div>
+            {isLongText && (
+                <button 
+                    onClick={() => setIsTextExpanded(!isTextExpanded)}
+                    className="mt-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-emerald-500 hover:text-emerald-400 transition-colors"
+                >
+                    {isTextExpanded ? (
+                        <>
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 15l7-7 7 7"></path></svg>
+                            Show Less
+                        </>
+                    ) : (
+                        <>
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                            Read Full Response
+                        </>
+                    )}
+                </button>
+            )}
+          </div>
+      );
   }
 
   return <div className="whitespace-pre-wrap font-light break-words">{content}</div>;
@@ -118,13 +216,31 @@ const Terminal: React.FC = () => {
   const logEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Vault State
+  const [showVault, setShowVault] = useState(false);
+  const [vaultKeys, setVaultKeys] = useState<StoredKey[]>([]);
+  const [newKeyName, setNewKeyName] = useState('');
+  const [newKeyValue, setNewKeyValue] = useState('');
+
   useEffect(() => {
     db.terminalLogs.orderBy('timestamp').toArray().then(setLogs);
+    
+    // Load vault keys
+    try {
+      const stored = localStorage.getItem('lumina_vault');
+      if (stored) {
+        setVaultKeys(JSON.parse(stored));
+      }
+    } catch (e) {
+      console.error('Failed to load vault', e);
+    }
   }, []);
 
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
+    if (!showVault) {
+      logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [logs, showVault]);
 
   const handleCommand = async () => {
     if (!input.trim() || isBusy) return;
@@ -160,8 +276,38 @@ const Terminal: React.FC = () => {
     inputRef.current?.focus();
   };
 
+  // Vault Actions
+  const saveKey = () => {
+    if (!newKeyName.trim() || !newKeyValue.trim()) return;
+    
+    const newEntry: StoredKey = {
+      id: `k-${Date.now()}`,
+      name: newKeyName.trim(),
+      value: encryptValue(newKeyValue.trim()),
+      created: Date.now()
+    };
+    
+    const updated = [...vaultKeys, newEntry];
+    setVaultKeys(updated);
+    localStorage.setItem('lumina_vault', JSON.stringify(updated));
+    setNewKeyName('');
+    setNewKeyValue('');
+  };
+
+  const deleteKey = (id: string) => {
+    const updated = vaultKeys.filter(k => k.id !== id);
+    setVaultKeys(updated);
+    localStorage.setItem('lumina_vault', JSON.stringify(updated));
+  };
+
+  const copyKey = async (encryptedValue: string) => {
+    const raw = decryptValue(encryptedValue);
+    await navigator.clipboard.writeText(raw);
+    alert('API Key copied to clipboard!');
+  };
+
   return (
-    <div className="flex flex-col h-full bg-black text-emerald-400 font-mono text-xs rounded-[2rem] overflow-hidden border border-white/10 shadow-2xl">
+    <div className="flex flex-col h-full bg-black text-emerald-400 font-mono text-xs rounded-[2rem] overflow-hidden border border-white/10 shadow-2xl relative">
       {/* Header with Model Selector */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-white/5">
         <div className="flex flex-col">
@@ -181,11 +327,72 @@ const Terminal: React.FC = () => {
             </button>
           </div>
         </div>
-        <button onClick={clearLogs} className="text-[9px] font-black hover:text-red-400 transition-colors uppercase tracking-widest border border-white/10 px-3 py-1 rounded-full">Flush Buffer</button>
+        <div className="flex items-center gap-2">
+           <button 
+             onClick={() => setShowVault(!showVault)}
+             className={`text-[9px] font-black transition-all uppercase tracking-widest border px-3 py-1 rounded-full flex items-center gap-2 ${showVault ? 'bg-amber-500 border-amber-500 text-black' : 'border-white/10 text-amber-500 hover:text-amber-400'}`}
+           >
+             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
+             {showVault ? 'Close Vault' : 'Key Vault'}
+           </button>
+           <button onClick={clearLogs} className="text-[9px] font-black hover:text-red-400 transition-colors uppercase tracking-widest border border-white/10 px-3 py-1 rounded-full">Flush Buffer</button>
+        </div>
       </div>
       
       {/* Console Output */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar bg-[radial-gradient(circle_at_50%_0%,_rgba(16,185,129,0.05)_0%,_transparent_70%)]">
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar bg-[radial-gradient(circle_at_50%_0%,_rgba(16,185,129,0.05)_0%,_transparent_70%)] relative">
+        {showVault && (
+            <div className="absolute inset-0 z-20 bg-black/90 backdrop-blur-sm p-8 animate-in fade-in zoom-in-95 duration-200">
+               <div className="max-w-md mx-auto">
+                 <h3 className="text-sm font-black text-amber-500 uppercase tracking-widest mb-6 flex items-center gap-2">
+                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                   Neural Key Vault
+                 </h3>
+                 
+                 {/* Add Key Form */}
+                 <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-6 space-y-3">
+                   <input 
+                      value={newKeyName}
+                      onChange={(e) => setNewKeyName(e.target.value)}
+                      placeholder="Key Alias (e.g. Production Gemini)"
+                      className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder:text-white/20 outline-none focus:border-amber-500/50"
+                   />
+                   <input 
+                      value={newKeyValue}
+                      onChange={(e) => setNewKeyValue(e.target.value)}
+                      placeholder="sk-..."
+                      type="password"
+                      className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder:text-white/20 outline-none focus:border-amber-500/50"
+                   />
+                   <button 
+                     onClick={saveKey}
+                     disabled={!newKeyName || !newKeyValue}
+                     className="w-full bg-amber-600 hover:bg-amber-500 text-black font-bold text-[10px] uppercase tracking-widest py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                   >
+                     Encrypt & Save Key
+                   </button>
+                 </div>
+
+                 {/* Key List */}
+                 <div className="space-y-3">
+                   {vaultKeys.length === 0 && <div className="text-center text-white/20 italic text-xs">No keys secured in vault.</div>}
+                   {vaultKeys.map((k) => (
+                     <div key={k.id} className="flex items-center justify-between p-3 rounded-lg border border-white/10 bg-white/5 group">
+                        <div className="flex flex-col">
+                           <span className="font-bold text-white text-xs">{k.name}</span>
+                           <span className="text-[10px] text-emerald-500/50 font-mono mt-0.5">••••••••{decryptValue(k.value).slice(-4)}</span>
+                        </div>
+                        <div className="flex gap-2 opacity-50 group-hover:opacity-100 transition-opacity">
+                           <button onClick={() => copyKey(k.value)} className="p-1.5 hover:bg-white/10 rounded text-blue-400" title="Copy Decrypted"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg></button>
+                           <button onClick={() => deleteKey(k.id)} className="p-1.5 hover:bg-white/10 rounded text-red-400" title="Delete"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
+                        </div>
+                     </div>
+                   ))}
+                 </div>
+               </div>
+            </div>
+        )}
+
         {logs.length === 0 && <div className="opacity-30 italic">// Awaiting memory excavation command...</div>}
         {logs.map((log, i) => (
           <div key={i} className={`animate-in fade-in slide-in-from-left-2 duration-300 ${log.type === 'request' ? 'text-white' : 'text-emerald-400/80'}`}>
