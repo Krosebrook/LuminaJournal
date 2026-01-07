@@ -33,6 +33,7 @@ export interface Comment {
 export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
+  sources?: any[];
 }
 
 export interface AppState {

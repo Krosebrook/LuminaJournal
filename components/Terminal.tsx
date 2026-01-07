@@ -45,9 +45,10 @@ interface StoredKey {
 interface FormattedOutputProps {
   content: string;
   type: 'request' | 'response' | 'error';
+  sources?: any[];
 }
 
-const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type }) => {
+const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type, sources }) => {
   const [isJsonExpanded, setIsJsonExpanded] = useState(false);
   const [isTextExpanded, setIsTextExpanded] = useState(false);
   
@@ -66,6 +67,37 @@ const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type }) => {
 
   // Detect code blocks (```code```)
   const hasCodeBlocks = content.includes('```');
+
+  const renderSources = () => {
+    if (!sources || sources.length === 0) return null;
+    return (
+      <div className="mt-4 pt-4 border-t border-white/5 space-y-2">
+        <div className="flex items-center gap-2 mb-2">
+          <svg className="w-3 h-3 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+          <span className="text-[9px] font-black uppercase tracking-widest text-white/40">Verified Sources</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {sources.map((chunk, idx) => {
+            const url = chunk.web?.uri || chunk.maps?.uri;
+            const title = chunk.web?.title || chunk.maps?.title || "Reference";
+            if (!url) return null;
+            return (
+              <a 
+                key={idx} 
+                href={url} 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[9px] text-blue-400 truncate max-w-[180px] transition-colors"
+                title={title}
+              >
+                {title}
+              </a>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   if (isJson && type === 'response') {
     const jsonString = JSON.stringify(jsonParsed, null, 2);
@@ -132,6 +164,7 @@ const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type }) => {
                 <span className="text-blue-400">ℹ️</span> {getSummary()}
             </div>
         )}
+        {renderSources()}
       </div>
     );
   }
@@ -164,6 +197,7 @@ const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type }) => {
           if (!part.trim()) return null;
           return <div key={i} className="whitespace-pre-wrap font-light opacity-90">{part}</div>;
         })}
+        {renderSources()}
       </div>
     );
   }
@@ -201,6 +235,7 @@ const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type }) => {
                     )}
                 </button>
             )}
+            {renderSources()}
           </div>
       );
   }
@@ -213,24 +248,26 @@ const Terminal: React.FC = () => {
   const [logs, setLogs] = useState<TerminalLog[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const [selectedModel, setSelectedModel] = useState<'gemini-3-pro-preview' | 'gemini-3-flash-preview'>('gemini-3-pro-preview');
+  const [useSearch, setUseSearch] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Vault State
   const [showVault, setShowVault] = useState(false);
   const [vaultKeys, setVaultKeys] = useState<StoredKey[]>([]);
+  const [activeKeyId, setActiveKeyId] = useState<string | null>(null);
   const [newKeyName, setNewKeyName] = useState('');
   const [newKeyValue, setNewKeyValue] = useState('');
 
   useEffect(() => {
     db.terminalLogs.orderBy('timestamp').toArray().then(setLogs);
     
-    // Load vault keys
+    // Load vault keys and active key
     try {
       const stored = localStorage.getItem('lumina_vault');
-      if (stored) {
-        setVaultKeys(JSON.parse(stored));
-      }
+      const activeId = localStorage.getItem('lumina_active_key_id');
+      if (stored) setVaultKeys(JSON.parse(stored));
+      if (activeId) setActiveKeyId(activeId);
     } catch (e) {
       console.error('Failed to load vault', e);
     }
@@ -248,21 +285,21 @@ const Terminal: React.FC = () => {
     const cmd = input;
     setInput('');
 
-    const newLogs: TerminalLog[] = [
-      ...logs,
-      { timestamp: Date.now(), prompt: cmd, response: '', type: 'request' }
-    ];
-    setLogs(newLogs);
-    await db.terminalLogs.add(newLogs[newLogs.length - 1]);
+    const newRequestLog: TerminalLog = { timestamp: Date.now(), prompt: cmd, response: '', type: 'request' };
+    const requestId = await db.terminalLogs.add(newRequestLog);
+    setLogs(prev => [...prev, { ...newRequestLog, id: requestId }]);
 
-    const res = await executeRawTerminalPrompt(cmd, selectedModel);
+    const res = await executeRawTerminalPrompt(cmd, selectedModel, useSearch);
     
-    const finalLogs: TerminalLog[] = [
-      ...newLogs,
-      { timestamp: Date.now(), prompt: cmd, response: res, type: 'response' }
-    ];
-    setLogs(finalLogs);
-    await db.terminalLogs.add(finalLogs[finalLogs.length - 1]);
+    const newResponseLog: TerminalLog = { 
+      timestamp: Date.now(), 
+      prompt: cmd, 
+      response: res.text, 
+      type: 'response',
+      sources: res.sources
+    };
+    const responseId = await db.terminalLogs.add(newResponseLog);
+    setLogs(prev => [...prev, { ...newResponseLog, id: responseId }]);
     setIsBusy(false);
   };
 
@@ -298,6 +335,20 @@ const Terminal: React.FC = () => {
     const updated = vaultKeys.filter(k => k.id !== id);
     setVaultKeys(updated);
     localStorage.setItem('lumina_vault', JSON.stringify(updated));
+    if (activeKeyId === id) {
+      setActiveKeyId(null);
+      localStorage.removeItem('lumina_active_key_id');
+    }
+  };
+
+  const toggleActiveKey = (id: string) => {
+    const nextId = activeKeyId === id ? null : id;
+    setActiveKeyId(nextId);
+    if (nextId) {
+      localStorage.setItem('lumina_active_key_id', nextId);
+    } else {
+      localStorage.removeItem('lumina_active_key_id');
+    }
   };
 
   const copyKey = async (encryptedValue: string) => {
@@ -311,11 +362,11 @@ const Terminal: React.FC = () => {
       {/* Header with Model Selector */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-white/5">
         <div className="flex flex-col">
-          <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500/50">Lumina Terminal v1.2</span>
+          <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500/50">Lumina Terminal v1.4</span>
           <div className="flex gap-2 mt-1">
             <button 
               onClick={() => setSelectedModel('gemini-3-pro-preview')}
-              className={`text-[7px] uppercase tracking-tighter px-2 py-0.5 rounded ${selectedModel === 'gemini-3-pro-preview' ? 'bg-emerald-500 text-black font-bold' : 'text-white/30 border border-white/10'}`}
+              className={`text-[7px] uppercase tracking-tighter px-2 py-0.5 rounded ${selectedModel === 'gemini-3-pro-preview' ? 'bg-emerald-50 text-black font-bold' : 'text-white/30 border border-white/10'}`}
             >
               Pro (IQ)
             </button>
@@ -325,9 +376,22 @@ const Terminal: React.FC = () => {
             >
               Flash (Speed)
             </button>
+            <button 
+              onClick={() => setUseSearch(!useSearch)}
+              className={`text-[7px] uppercase tracking-tighter px-2 py-0.5 rounded flex items-center gap-1 transition-all ${useSearch ? 'bg-amber-500 text-black font-bold' : 'text-white/30 border border-white/10'}`}
+            >
+              <div className={`w-1 h-1 rounded-full ${useSearch ? 'bg-black animate-ping' : 'bg-white/20'}`}></div>
+              Search
+            </button>
           </div>
         </div>
         <div className="flex items-center gap-2">
+           {activeKeyId && (
+             <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-500/10 rounded-full border border-emerald-500/20" title="Custom Neural Key Active">
+               <svg className="w-2.5 h-2.5 text-emerald-500 animate-pulse" fill="currentColor" viewBox="0 0 20 20"><circle cx="10" cy="10" r="10"></circle></svg>
+               <span className="text-[8px] font-black uppercase text-emerald-500">Secured</span>
+             </div>
+           )}
            <button 
              onClick={() => setShowVault(!showVault)}
              className={`text-[9px] font-black transition-all uppercase tracking-widest border px-3 py-1 rounded-full flex items-center gap-2 ${showVault ? 'bg-amber-500 border-amber-500 text-black' : 'border-white/10 text-amber-500 hover:text-amber-400'}`}
@@ -342,8 +406,8 @@ const Terminal: React.FC = () => {
       {/* Console Output */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar bg-[radial-gradient(circle_at_50%_0%,_rgba(16,185,129,0.05)_0%,_transparent_70%)] relative">
         {showVault && (
-            <div className="absolute inset-0 z-20 bg-black/90 backdrop-blur-sm p-8 animate-in fade-in zoom-in-95 duration-200">
-               <div className="max-w-md mx-auto">
+            <div className="absolute inset-0 z-20 bg-black/90 backdrop-blur-sm p-8 animate-in fade-in zoom-in-95 duration-200 overflow-y-auto custom-scrollbar">
+               <div className="max-w-md mx-auto pb-10">
                  <h3 className="text-sm font-black text-amber-500 uppercase tracking-widest mb-6 flex items-center gap-2">
                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
                    Neural Key Vault
@@ -377,10 +441,22 @@ const Terminal: React.FC = () => {
                  <div className="space-y-3">
                    {vaultKeys.length === 0 && <div className="text-center text-white/20 italic text-xs">No keys secured in vault.</div>}
                    {vaultKeys.map((k) => (
-                     <div key={k.id} className="flex items-center justify-between p-3 rounded-lg border border-white/10 bg-white/5 group">
-                        <div className="flex flex-col">
-                           <span className="font-bold text-white text-xs">{k.name}</span>
-                           <span className="text-[10px] text-emerald-500/50 font-mono mt-0.5">••••••••{decryptValue(k.value).slice(-4)}</span>
+                     <div key={k.id} className={`flex items-center justify-between p-3 rounded-lg border transition-all group ${activeKeyId === k.id ? 'bg-emerald-500/10 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'border-white/10 bg-white/5'}`}>
+                        <div className="flex items-center gap-3">
+                           <button 
+                             onClick={() => toggleActiveKey(k.id)}
+                             className={`p-2 rounded-lg transition-all ${activeKeyId === k.id ? 'bg-emerald-500 text-black' : 'bg-white/5 text-white/30 hover:bg-white/10'}`}
+                             title={activeKeyId === k.id ? "Key Active" : "Activate Key"}
+                           >
+                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                           </button>
+                           <div className="flex flex-col">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-white text-xs">{k.name}</span>
+                                {activeKeyId === k.id && <span className="text-[7px] font-black bg-emerald-500 text-black px-1 rounded">PRIMARY</span>}
+                              </div>
+                              <span className="text-[10px] text-emerald-500/50 font-mono mt-0.5">••••••••{decryptValue(k.value).slice(-4)}</span>
+                           </div>
                         </div>
                         <div className="flex gap-2 opacity-50 group-hover:opacity-100 transition-opacity">
                            <button onClick={() => copyKey(k.value)} className="p-1.5 hover:bg-white/10 rounded text-blue-400" title="Copy Decrypted"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg></button>
@@ -405,6 +481,7 @@ const Terminal: React.FC = () => {
                 <FormattedOutput 
                   content={log.type === 'request' ? log.prompt : log.response} 
                   type={log.type} 
+                  sources={log.sources}
                 />
               </div>
             </div>

@@ -34,6 +34,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [activeTab, setActiveTab] = useState<'config' | 'chat' | 'terminal'>('config');
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [useSearch, setUseSearch] = useState(false);
 
   // Profile Management State
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
@@ -147,14 +148,22 @@ const Sidebar: React.FC<SidebarProps> = ({
     setIsProcessing(true);
     try {
       let modelResponse = "";
-      await chatWithContext(
+      let modelSources: any[] | undefined;
+      
+      const res = await chatWithContext(
         content, 
         chatHistory, 
         chatInput, 
         (chunk) => { modelResponse = chunk; },
-        activeProfile?.systemInstruction
+        activeProfile?.systemInstruction,
+        useSearch
       );
-      setChatHistory(prev => [...prev, { role: 'model', text: modelResponse }]);
+      
+      setChatHistory(prev => [...prev, { 
+        role: 'model', 
+        text: res.text, 
+        sources: res.sources 
+      }]);
     } catch (e) { console.error(e); }
     finally { setIsProcessing(false); }
   };
@@ -281,14 +290,36 @@ const Sidebar: React.FC<SidebarProps> = ({
               <div className="flex flex-col h-full space-y-4">
                 <div className="flex-1 space-y-4 overflow-y-auto pr-2 custom-scrollbar">
                   {chatHistory.map((msg, i) => (
-                    <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[85%] p-4 rounded-3xl text-sm ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-100'}`}>{msg.text}</div>
+                    <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                      <div className={`max-w-[85%] p-4 rounded-3xl text-sm ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-100'}`}>
+                        {msg.text}
+                      </div>
+                      {msg.sources && msg.sources.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1 max-w-[85%] px-2">
+                           {msg.sources.map((s, idx) => (
+                             <a key={idx} href={s.web?.uri} target="_blank" rel="noreferrer" className="text-[8px] font-bold text-blue-500 bg-blue-50 px-2 py-0.5 rounded-full hover:bg-blue-100 transition-colors truncate max-w-[120px]">
+                               {s.web?.title || 'Source'}
+                             </a>
+                           ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
-                <div className="relative pt-4">
-                   <input value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleChat()} placeholder="Ask for counsel or memory prompts..." className="w-full bg-white border border-gray-200 rounded-2xl py-4 px-6 text-sm outline-none pr-14" />
-                   <button onClick={handleChat} disabled={isProcessing || !chatInput.trim()} className="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-blue-600 text-white rounded-xl shadow-lg disabled:opacity-30"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M14 5l7 7-7 7M3 12h18"></path></svg></button>
+                <div className="space-y-3 pt-4">
+                   <div className="flex items-center gap-2 px-1">
+                      <button 
+                        onClick={() => setUseSearch(!useSearch)}
+                        className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest transition-all ${useSearch ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-400 hover:text-gray-600'}`}
+                      >
+                        <div className={`w-1 h-1 rounded-full ${useSearch ? 'bg-blue-600 animate-pulse' : 'bg-gray-400'}`}></div>
+                        Search Web Context
+                      </button>
+                   </div>
+                   <div className="relative">
+                      <input value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleChat()} placeholder="Ask for counsel or research prompts..." className="w-full bg-white border border-gray-200 rounded-2xl py-4 px-6 text-sm outline-none pr-14 shadow-sm focus:ring-2 ring-blue-50 transition-all" />
+                      <button onClick={handleChat} disabled={isProcessing || !chatInput.trim()} className="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-blue-600 text-white rounded-xl shadow-lg disabled:opacity-30 hover:scale-105 active:scale-95 transition-all"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M14 5l7 7-7 7M3 12h18"></path></svg></button>
+                   </div>
                 </div>
               </div>
             )}

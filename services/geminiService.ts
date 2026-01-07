@@ -2,8 +2,42 @@
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { FileAttachment, WritingTone, ChatMessage } from "../types";
 
+const CIPHER_SALT = 'LUMINA_NEURAL_CORE_v1';
+
+const decryptValue = (cipher: string): string => {
+  try {
+    const raw = atob(cipher);
+    const rawChars = raw.split('').map(c => c.charCodeAt(0));
+    const saltChars = CIPHER_SALT.split('').map(c => c.charCodeAt(0));
+    const decrypted = rawChars.map((char, i) => 
+      char ^ saltChars[i % saltChars.length]
+    );
+    return String.fromCharCode(...decrypted);
+  } catch (e) { return ''; }
+};
+
+/**
+ * Retrieves the active API key from the vault if set, otherwise returns the default.
+ */
+const getActiveApiKey = (): string => {
+  try {
+    const activeId = localStorage.getItem('lumina_active_key_id');
+    const vault = localStorage.getItem('lumina_vault');
+    if (activeId && vault) {
+      const keys = JSON.parse(vault);
+      const activeKey = keys.find((k: any) => k.id === activeId);
+      if (activeKey) {
+        return decryptValue(activeKey.value);
+      }
+    }
+  } catch (e) {
+    console.error("Failed to retrieve vault key", e);
+  }
+  return process.env.API_KEY || '';
+};
+
 const getAIClient = () => {
-  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+  return new GoogleGenAI({ apiKey: getActiveApiKey() });
 };
 
 const TONE_INSTRUCTIONS: Record<WritingTone, string> = {
@@ -88,18 +122,32 @@ export const rewriteSelectionStream = async (
 };
 
 /**
- * TERMINAL RAW EXECUTION
+ * TERMINAL RAW EXECUTION WITH SEARCH SUPPORT
  */
-export const executeRawTerminalPrompt = async (prompt: string, modelName: string = 'gemini-3-pro-preview'): Promise<string> => {
+export const executeRawTerminalPrompt = async (
+  prompt: string, 
+  modelName: string = 'gemini-3-pro-preview',
+  useSearch: boolean = false
+): Promise<{ text: string, sources?: any[] }> => {
   const ai = getAIClient();
   try {
+    const config: any = {};
+    if (useSearch) {
+      config.tools = [{ googleSearch: {} }];
+    }
+
     const response = await ai.models.generateContent({
       model: modelName,
       contents: prompt,
+      config: config
     });
-    return response.text || "No response received.";
+    
+    const text = response.text || "No response received.";
+    const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    
+    return { text, sources };
   } catch (e: any) {
-    return `Error: ${e.message || JSON.stringify(e)}`;
+    return { text: `Error: ${e.message || JSON.stringify(e)}` };
   }
 };
 
@@ -136,24 +184,36 @@ export const chatWithContext = async (
   history: ChatMessage[],
   message: string,
   onChunk: (text: string) => void,
-  customSystemInstruction?: string
+  customSystemInstruction?: string,
+  useSearch: boolean = false
 ) => {
   const ai = getAIClient();
   const baseInstruction = "You are a professional ghostwriter and biographer. Your job is to help the user recall memories and turn them into compelling narrative prose.";
   const finalInstruction = customSystemInstruction ? `${baseInstruction} ${customSystemInstruction}` : baseInstruction;
   
+  const config: any = { systemInstruction: finalInstruction };
+  if (useSearch) {
+    config.tools = [{ googleSearch: {} }];
+  }
+
   const chat = ai.chats.create({ 
     model: 'gemini-3-flash-preview',
-    config: { systemInstruction: finalInstruction }
+    config: config
   });
   
   const result = await chat.sendMessageStream({ message: `DOC: ${content}\nUSER: ${message}` });
   let fullText = "";
+  let sources: any[] | undefined;
+
   for await (const chunk of result) {
     if (chunk.text) {
       fullText += chunk.text;
       onChunk(fullText);
     }
+    // Grounding metadata is usually available on chunks or the final candidate
+    if (chunk.candidates?.[0]?.groundingMetadata?.groundingChunks) {
+      sources = chunk.candidates[0].groundingMetadata.groundingChunks;
+    }
   }
-  return fullText;
+  return { text: fullText, sources };
 };

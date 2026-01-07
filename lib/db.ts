@@ -16,6 +16,7 @@ export interface TerminalLog {
   prompt: string;
   response: string;
   type: 'request' | 'response' | 'error';
+  sources?: any[];
 }
 
 /**
@@ -28,8 +29,8 @@ const db = new Dexie('LuminaDB') as Dexie & {
 };
 
 // Initialize the database schema and versioning.
-// Version 2 adds the profiles table.
-db.version(2).stores({
+// Version 3 adds sources field to terminalLogs
+db.version(3).stores({
   drafts: '++id, title, updatedAt',
   terminalLogs: '++id, timestamp',
   profiles: '++id, name, isDefault'
