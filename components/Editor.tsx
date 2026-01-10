@@ -44,6 +44,7 @@ const Editor: React.FC<EditorProps> = ({
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const isInternalUpdate = useRef(false);
+  const hoverTimeoutRef = useRef<any>(null);
   
   const [selection, setSelection] = useState<{ text: string; range: Range | null; rect: DOMRect | null }>({ text: '', range: null, rect: null });
   const [feedback, setFeedback] = useState('');
@@ -111,6 +112,12 @@ const Editor: React.FC<EditorProps> = ({
     isInternalUpdate.current = false;
   }, [highlightedContent, isProcessing]);
 
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    };
+  }, []);
+
   const handleMagicApplyAll = useCallback(() => {
     if (suggestions.length === 0) return;
     setIsFlashing(true);
@@ -122,6 +129,7 @@ const Editor: React.FC<EditorProps> = ({
     const newText = e.currentTarget.innerText;
     isInternalUpdate.current = true;
     onChange(newText);
+    pushToHistory(newText, suggestions, comments);
   };
 
   useEffect(() => {
@@ -165,8 +173,8 @@ const Editor: React.FC<EditorProps> = ({
     const newSuggestions = suggestions.filter(x => x.id !== s.id);
     setSuggestions(newSuggestions);
     setHoveredSuggestion(null);
-    // Optionally push to history if dismissal is considered a state change worth undoing
-  }, [suggestions, setSuggestions]);
+    pushToHistory(content, newSuggestions, comments);
+  }, [suggestions, setSuggestions, content, comments, pushToHistory]);
 
   const applyCorrection = (errorId: string, correction: string) => {
     const err = spellErrors.find(e => e.id === errorId);
@@ -239,37 +247,64 @@ const Editor: React.FC<EditorProps> = ({
   const handleMouseMove = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
 
-    // optimization: if we are over the tooltip, keep the state
-    if (target.closest('.suggestion-tooltip')) return;
+    const isOverTooltip = target.closest('.suggestion-tooltip');
+    const isOverSuggestion = target.closest('.ai-suggestion');
+    const isOverComment = target.closest('.user-comment');
 
-    const suggestionSpan = target.closest('.ai-suggestion') as HTMLElement;
-    const commentSpan = target.closest('.user-comment') as HTMLElement;
-    
-    if (suggestionSpan) {
-      const id = suggestionSpan.getAttribute('data-suggestion-id');
-      
-      // Optimization: Avoid re-setting state if same suggestion
-      if (hoveredSuggestion?.s.id === id) return;
-
-      const suggestion = suggestions.find(s => s.id === id);
-      if (suggestion) setHoveredSuggestion({ s: suggestion, rect: suggestionSpan.getBoundingClientRect() });
-      setHoveredCommentId(null);
-      setHoveredComment(null);
-    } else if (commentSpan) {
-      const id = commentSpan.getAttribute('data-comment-id');
-      const comment = comments.find(c => c.id === id);
-      if (comment) {
-        setHoveredComment({ c: comment, rect: commentSpan.getBoundingClientRect() });
-        setHoveredCommentId(id);
+    // 1. Handle Suggestion Tooltip Persistence
+    // If over tooltip or suggestion, keep it alive (clear timeout)
+    if (isOverTooltip || isOverSuggestion) {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+        hoverTimeoutRef.current = null;
       }
-      setHoveredSuggestion(null);
-    } else {
-      // Clear only if we are not traversing the gap between span and tooltip
-      // Since we can't easily detect the "intent" to go to tooltip, 
-      // we rely on the user moving mouse directly.
-      setHoveredSuggestion(null);
+    }
+
+    if (isOverSuggestion) {
+      const id = (isOverSuggestion as HTMLElement).getAttribute('data-suggestion-id');
+      if (hoveredSuggestion?.s.id !== id) {
+         const suggestion = suggestions.find(s => s.id === id);
+         if (suggestion) {
+           setHoveredSuggestion({ s: suggestion, rect: (isOverSuggestion as HTMLElement).getBoundingClientRect() });
+         }
+      }
+      // If we are on a suggestion, we shouldn't show comments
       setHoveredCommentId(null);
       setHoveredComment(null);
+      return; 
+    }
+
+    if (isOverTooltip) {
+      // Don't do anything, just keep showing it.
+      // Also ensure comments are hidden if we are interacting with suggestion tooltip
+      setHoveredCommentId(null);
+      setHoveredComment(null);
+      return;
+    }
+
+    // 2. If not over suggestion or tooltip, schedule hiding
+    if (hoveredSuggestion) {
+       if (!hoverTimeoutRef.current) {
+         hoverTimeoutRef.current = setTimeout(() => {
+           setHoveredSuggestion(null);
+           hoverTimeoutRef.current = null;
+         }, 400); // 400ms delay to allow moving to tooltip
+       }
+    }
+
+    // 3. Handle Comments (Simple instant hover)
+    if (isOverComment) {
+       const id = (isOverComment as HTMLElement).getAttribute('data-comment-id');
+       const comment = comments.find(c => c.id === id);
+       if (comment) {
+         setHoveredComment({ c: comment, rect: (isOverComment as HTMLElement).getBoundingClientRect() });
+         setHoveredCommentId(id);
+       }
+       // Don't show suggestion tooltip if we are hovering a comment
+       // (Unless we are already hovering one and moving out, handled above)
+    } else {
+       setHoveredCommentId(null);
+       setHoveredComment(null);
     }
   };
 
@@ -280,15 +315,17 @@ const Editor: React.FC<EditorProps> = ({
     setIsProcessing(true);
     setIsStreaming(true);
     
+    let finalContent = content;
+
     try {
-      let currentRewrite = "";
       await rewriteSelectionStream(content, selection.text, targetFeedback, tone, (chunk) => {
-        currentRewrite = chunk;
-        const updatedContent = content.replace(selection.text, currentRewrite);
+        const updatedContent = content.replace(selection.text, chunk);
         onChange(updatedContent);
+        finalContent = updatedContent;
       });
       setSelection({ text: '', range: null, rect: null });
       setFeedback('');
+      pushToHistory(finalContent, suggestions, comments);
     } catch (e) { console.error("Rewrite failed", e); }
     finally { setIsProcessing(false); setIsStreaming(false); }
   };

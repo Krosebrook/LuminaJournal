@@ -36,6 +36,15 @@ export interface ChatMessage {
   sources?: any[];
 }
 
+export interface Draft {
+  id?: number;
+  title: string;
+  content: string;
+  tone: WritingTone;
+  wordCount: number;
+  updatedAt: number;
+}
+
 export interface AppState {
   content: string;
   tone: WritingTone;
