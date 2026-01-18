@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { executeRawTerminalPrompt } from '../services/geminiService';
+import { encryptValue, decryptValue } from '../services/security';
 import { db, TerminalLog } from '../lib/db';
 
 const EXAMPLES = [
@@ -10,30 +11,6 @@ const EXAMPLES = [
   { label: 'Timeline Anchor', text: 'I have these memories: [A, B, C]. Suggest a narrative theme that connects them into a single chapter.' },
   { label: 'Emotional Depth', text: 'Analyze this paragraph for emotional honesty. Where am I "telling" instead of "showing" my feelings?' }
 ];
-
-// --- Encryption Utilities ---
-const CIPHER_SALT = 'LUMINA_NEURAL_CORE_v1';
-
-const encryptValue = (text: string): string => {
-  const textChars = text.split('').map(c => c.charCodeAt(0));
-  const saltChars = CIPHER_SALT.split('').map(c => c.charCodeAt(0));
-  const encrypted = textChars.map((char, i) => 
-    char ^ saltChars[i % saltChars.length]
-  );
-  return btoa(String.fromCharCode(...encrypted));
-};
-
-const decryptValue = (cipher: string): string => {
-  try {
-    const raw = atob(cipher);
-    const rawChars = raw.split('').map(c => c.charCodeAt(0));
-    const saltChars = CIPHER_SALT.split('').map(c => c.charCodeAt(0));
-    const decrypted = rawChars.map((char, i) => 
-      char ^ saltChars[i % saltChars.length]
-    );
-    return String.fromCharCode(...decrypted);
-  } catch (e) { return '*** CORRUPTED ***'; }
-};
 
 interface StoredKey {
   id: string;
@@ -123,7 +100,6 @@ const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type, source
         return `<span class="${cls}">${match}</span>`;
       });
 
-    // Generate a concise summary
     const getSummary = () => {
         if (Array.isArray(jsonParsed)) {
             const firstItem = jsonParsed[0];
@@ -202,7 +178,6 @@ const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type, source
     );
   }
 
-  // Handle plain long text responses
   const CHAR_LIMIT = 350;
   const isLongText = content.length > CHAR_LIMIT;
   
@@ -251,6 +226,10 @@ const Terminal: React.FC = () => {
   const [useSearch, setUseSearch] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  
+  // History State
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [tempInput, setTempInput] = useState('');
 
   // Vault State
   const [showVault, setShowVault] = useState(false);
@@ -284,6 +263,7 @@ const Terminal: React.FC = () => {
     setIsBusy(true);
     const cmd = input;
     setInput('');
+    setHistoryIndex(-1); 
 
     const newRequestLog: TerminalLog = { timestamp: Date.now(), prompt: cmd, response: '', type: 'request' };
     const requestId = await db.terminalLogs.add(newRequestLog);
@@ -311,6 +291,40 @@ const Terminal: React.FC = () => {
   const prePopulate = (text: string) => {
     setInput(text);
     inputRef.current?.focus();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+        handleCommand();
+        return;
+    }
+
+    const historyLogs = logs.filter(l => l.type === 'request');
+    if (historyLogs.length === 0) return;
+
+    if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const newIndex = historyIndex < 0 
+            ? historyLogs.length - 1 
+            : Math.max(0, historyIndex - 1);
+        
+        if (historyIndex < 0) setTempInput(input);
+        
+        setHistoryIndex(newIndex);
+        setInput(historyLogs[newIndex].prompt);
+    } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (historyIndex < 0) return; 
+
+        const newIndex = historyIndex + 1;
+        if (newIndex >= historyLogs.length) {
+            setHistoryIndex(-1);
+            setInput(tempInput);
+        } else {
+            setHistoryIndex(newIndex);
+            setInput(historyLogs[newIndex].prompt);
+        }
+    }
   };
 
   // Vault Actions
@@ -515,7 +529,7 @@ const Terminal: React.FC = () => {
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleCommand()}
+            onKeyDown={handleKeyDown}
             placeholder="Execute memory command..."
             className="flex-1 bg-transparent outline-none text-emerald-300 placeholder:opacity-20 text-[11px]"
             disabled={isBusy}

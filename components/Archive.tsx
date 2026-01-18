@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/db';
 import { Draft } from '../types';
+import { semanticSearch } from '../services/vectorService';
 
 interface ArchiveProps {
   isOpen: boolean;
@@ -13,7 +14,9 @@ interface ArchiveProps {
 const Archive: React.FC<ArchiveProps> = ({ isOpen, onClose, onSelectDraft, currentDraftId }) => {
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [search, setSearch] = useState('');
+  const [useSemantic, setUseSemantic] = useState(false);
   const [isDeleting, setIsDeleting] = useState<number | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -25,6 +28,42 @@ const Archive: React.FC<ArchiveProps> = ({ isOpen, onClose, onSelectDraft, curre
     const all = await db.drafts.orderBy('updatedAt').reverse().toArray();
     setDrafts(all);
   };
+
+  const handleSearch = async () => {
+    if (!search.trim()) {
+      loadDrafts();
+      return;
+    }
+
+    if (useSemantic) {
+      setIsSearching(true);
+      try {
+        const ids = await semanticSearch(search);
+        // Dexie doesn't support bulkGet easily with types, manual map
+        const results = await Promise.all(ids.map(id => db.drafts.get(id)));
+        setDrafts(results.filter(Boolean) as Draft[]);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setIsSearching(false);
+      }
+    } else {
+      // Client-side filter
+      const all = await db.drafts.orderBy('updatedAt').reverse().toArray();
+      const filtered = all.filter(d => 
+        d.title.toLowerCase().includes(search.toLowerCase()) || 
+        d.content.slice(0, 500).toLowerCase().includes(search.toLowerCase())
+      );
+      setDrafts(filtered);
+    }
+  };
+
+  useEffect(() => {
+    // Debounce search if strictly text, instant if semantic (triggered by Enter or button)
+    if (!useSemantic) {
+      handleSearch();
+    }
+  }, [search, useSemantic]);
 
   const handleCreateNew = async () => {
     const newDraft: Draft = {
@@ -49,11 +88,6 @@ const Archive: React.FC<ArchiveProps> = ({ isOpen, onClose, onSelectDraft, curre
     }
   };
 
-  const filteredDrafts = drafts.filter(d => 
-    d.title.toLowerCase().includes(search.toLowerCase()) || 
-    d.content.slice(0, 100).toLowerCase().includes(search.toLowerCase())
-  );
-
   return (
     <div className={`fixed inset-0 z-[60] transition-all duration-500 ${isOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
       {/* Backdrop */}
@@ -75,15 +109,26 @@ const Archive: React.FC<ArchiveProps> = ({ isOpen, onClose, onSelectDraft, curre
           </div>
           
           <div className="flex items-center gap-4">
-            <div className="relative hidden sm:block">
-              <svg className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-              <input 
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search memories..." 
-                className="bg-white/50 border border-white/50 rounded-xl py-2 pl-9 pr-4 text-xs font-medium outline-none focus:bg-white transition-all w-64"
-              />
+            <div className="flex items-center gap-2 bg-white/50 border border-white/50 rounded-xl p-1 pr-3">
+              <div className="relative">
+                 <svg className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${isSearching ? 'text-blue-500 animate-spin' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={isSearching ? "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" : "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"}></path></svg>
+                 <input 
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && useSemantic && handleSearch()}
+                  placeholder={useSemantic ? "Search by concept (e.g. 'loneliness')..." : "Filter by title..."}
+                  className="bg-transparent py-1.5 pl-9 pr-2 text-xs font-medium outline-none w-64"
+                />
+              </div>
+              <button 
+                onClick={() => setUseSemantic(!useSemantic)}
+                className={`text-[9px] font-black uppercase px-2 py-1 rounded-lg transition-all ${useSemantic ? 'bg-indigo-600 text-white shadow-lg' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}`}
+                title="Semantic Vector Search"
+              >
+                AI Search
+              </button>
             </div>
+
             <button 
               onClick={handleCreateNew}
               className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-500/30 transition-all flex items-center gap-2 hover:scale-105 active:scale-95"
@@ -99,14 +144,14 @@ const Archive: React.FC<ArchiveProps> = ({ isOpen, onClose, onSelectDraft, curre
 
         {/* Grid */}
         <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-white/30">
-          {filteredDrafts.length === 0 ? (
+          {drafts.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-60">
               <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
               <p className="text-sm font-serif italic">Your library is empty. Start a new chapter.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {filteredDrafts.map((draft) => (
+              {drafts.map((draft) => (
                 <div 
                   key={draft.id}
                   onClick={() => onSelectDraft(draft)}

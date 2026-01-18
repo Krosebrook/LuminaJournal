@@ -11,6 +11,27 @@ export interface TerminalLog {
   sources?: any[];
 }
 
+export interface Entity {
+  id?: number;
+  name: string;
+  type: 'Person' | 'Location' | 'Object' | 'Theme';
+  description: string;
+  draftIds: number[];
+  lastSeen: number;
+}
+
+export interface VectorEmbedding {
+  draftId: number;
+  vector: number[];
+}
+
+export interface PromptTemplate {
+  id?: number;
+  name: string;
+  content: string;
+  created: number;
+}
+
 /**
  * Lumina Database implementation using Dexie.
  */
@@ -18,15 +39,20 @@ const db = new Dexie('LuminaDB') as Dexie & {
   drafts: Table<Draft>;
   terminalLogs: Table<TerminalLog>;
   profiles: Table<UserProfile>;
+  entities: Table<Entity>;
+  embeddings: Table<VectorEmbedding>;
+  promptTemplates: Table<PromptTemplate>;
 };
 
 // Initialize the database schema and versioning.
-// Version 3 adds sources field to terminalLogs
-// Version 4 adds wordCount to drafts for the Archive view
-db.version(4).stores({
+// Version 6 adds promptTemplates table
+db.version(6).stores({
   drafts: '++id, title, wordCount, updatedAt',
   terminalLogs: '++id, timestamp',
-  profiles: '++id, name, isDefault'
+  profiles: '++id, name, isDefault',
+  entities: '++id, name, type, *draftIds',
+  embeddings: 'draftId',
+  promptTemplates: '++id, name, created'
 });
 
 export { db };

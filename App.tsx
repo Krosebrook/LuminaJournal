@@ -4,10 +4,13 @@ import Editor from './components/Editor';
 import Sidebar from './components/Sidebar';
 import Archive from './components/Archive';
 import InterviewRoom from './components/InterviewRoom';
+import EchoSession from './components/EchoSession';
 import { WritingTone, Suggestion, Comment, Draft } from './types';
 import { jsPDF } from "jspdf";
-import { Document, Packer, Paragraph, TextRun } from "docx";
+import { Document, Packer, Paragraph, TextRun, AlignmentType, HeadingLevel } from "docx";
 import { db } from './lib/db';
+import { indexDraft } from './services/vectorService';
+import { generateSceneImage } from './services/geminiService';
 
 const App: React.FC = () => {
   // Document State
@@ -21,9 +24,12 @@ const App: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportStatus, setExportStatus] = useState('');
   
-  // Live Interview State
+  // Live State
   const [showInterview, setShowInterview] = useState(false);
+  const [showEcho, setShowEcho] = useState(false);
   const [interviewInstruction, setInterviewInstruction] = useState('');
 
   // Editor Metadata
@@ -35,6 +41,7 @@ const App: React.FC = () => {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const isInternalChange = useRef(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Initial Load: Fetch most recent draft or create default
   useEffect(() => {
@@ -76,7 +83,7 @@ const App: React.FC = () => {
     loadDraft(draft);
   };
 
-  // Auto-save logic
+  // Auto-save logic & Vector Indexing
   useEffect(() => {
     if (currentDraftId === undefined) return;
 
@@ -98,6 +105,10 @@ const App: React.FC = () => {
           wordCount: content ? wordCount : 0,
           updatedAt: Date.now()
         });
+
+        // Background Vector Indexing for Search
+        await indexDraft(currentDraftId, content);
+
       } catch (error) {
         console.error("Auto-save failed:", error);
       } finally {
@@ -155,37 +166,136 @@ const App: React.FC = () => {
   const handleExport = async (format: 'txt' | 'docx' | 'pdf' | 'md' | 'copy') => {
     const filename = `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'lumina-draft'}`;
     setShowExportMenu(false);
-
+    
     if (format === 'copy') {
-      try {
-        await navigator.clipboard.writeText(content);
-      } catch (err) {
-        console.error('Failed to copy text: ', err);
-      }
+      await navigator.clipboard.writeText(content);
+      alert('Draft copied to clipboard');
       return;
     }
 
-    if (format === 'pdf') {
-      const doc = new jsPDF();
-      doc.setFontSize(14).text(content, 10, 10);
-      doc.save(`${filename}.pdf`);
-    } else if (format === 'docx') {
-      const doc = new Document({ 
-        sections: [{ 
-          children: content.split('\n').map(l => new Paragraph({ 
-            children: [new TextRun(l)] 
-          })) 
-        }] 
-      });
-      const blob = await Packer.toBlob(doc);
-      downloadBlob(blob, `${filename}.docx`);
-    } else if (format === 'md') {
-      const blob = new Blob([content], { type: 'text/markdown' });
-      downloadBlob(blob, `${filename}.md`);
-    } else {
-      const blob = new Blob([content], { type: 'text/plain' });
-      downloadBlob(blob, `${filename}.txt`);
+    try {
+      if (format === 'pdf') {
+        setIsExporting(true);
+        setExportStatus('Designing Cover...');
+        const doc = new jsPDF();
+        
+        // AI Generated Cover
+        try {
+          const coverPrompt = `A minimal, artistic book cover for a memoir chapter titled "${title}". B&W, woodcut style, highly detailed.`;
+          const base64Cover = await generateSceneImage(coverPrompt);
+          if (base64Cover) {
+            doc.addImage(`data:image/png;base64,${base64Cover}`, 'PNG', 0, 0, 210, 297, undefined, 'FAST');
+            
+            // Add Title on Cover
+            doc.setFont("times", "bold");
+            doc.setFontSize(32);
+            doc.setTextColor(255, 255, 255);
+            // Simple shadow/outline hack for readability
+            doc.text(title, 105, 100, { align: 'center' });
+            
+            doc.setTextColor(0, 0, 0); // Reset
+            doc.addPage();
+          }
+        } catch (e) { console.error("Cover Gen Failed", e); }
+
+        setExportStatus('Typesetting...');
+        doc.setFont("times", "normal");
+        doc.setFontSize(12);
+        
+        const lines = doc.splitTextToSize(content, 170);
+        let cursorY = 30;
+        let pageNum = 1;
+
+        // Title on first text page
+        doc.setFont("times", "bold");
+        doc.setFontSize(18);
+        doc.text(title, 105, 20, { align: 'center' });
+        doc.setFont("times", "normal");
+        doc.setFontSize(12);
+        
+        lines.forEach((line: string) => {
+          if (cursorY > 270) {
+            doc.setFontSize(10);
+            doc.text(`${pageNum}`, 105, 290, { align: 'center' });
+            doc.setFontSize(12);
+            doc.addPage();
+            cursorY = 20;
+            pageNum++;
+          }
+          doc.text(line, 20, cursorY);
+          cursorY += 7;
+        });
+        
+        // Page number for last page
+        doc.setFontSize(10);
+        doc.text(`${pageNum}`, 105, 290, { align: 'center' });
+
+        doc.save(`${filename}.pdf`);
+      } else if (format === 'docx') {
+        setIsExporting(true);
+        setExportStatus('Packaging Doc...');
+        
+        const doc = new Document({ 
+          sections: [{ 
+            properties: {},
+            children: [
+              new Paragraph({
+                text: title,
+                heading: HeadingLevel.TITLE,
+                alignment: AlignmentType.CENTER,
+                spacing: { after: 400 }
+              }),
+              ...content.split('\n').map(l => new Paragraph({ 
+                children: [new TextRun({ text: l, size: 24, font: "Times New Roman" })], // 24 = 12pt
+                spacing: { after: 200 }
+              }))
+            ] 
+          }] 
+        });
+        const blob = await Packer.toBlob(doc);
+        downloadBlob(blob, `${filename}.docx`);
+      } else if (format === 'md') {
+        const blob = new Blob([`# ${title}\n\n${content}`], { type: 'text/markdown' });
+        downloadBlob(blob, `${filename}.md`);
+      } else {
+        const blob = new Blob([content], { type: 'text/plain' });
+        downloadBlob(blob, `${filename}.txt`);
+      }
+    } catch (e) {
+      console.error("Export failed", e);
+      alert("Export failed. Please try again.");
+    } finally {
+      setIsExporting(false);
+      setExportStatus('');
     }
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const text = e.target?.result as string;
+      
+      const newDraft: Draft = {
+        title: file.name.replace(/\.(txt|md)$/i, ''),
+        content: text,
+        tone: 'memoir',
+        wordCount: text.trim().split(/\s+/).length,
+        updatedAt: Date.now()
+      };
+      
+      const id = await db.drafts.add(newDraft);
+      loadDraft({ ...newDraft, id: Number(id) });
+      
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+    reader.readAsText(file);
   };
 
   const downloadBlob = (blob: Blob, name: string) => {
@@ -213,12 +323,47 @@ const App: React.FC = () => {
     }
   };
 
+  // Echo Mode Handling
+  const handleEchoEnd = (prose: string) => {
+    setShowEcho(false);
+    if (prose.trim()) {
+      const newContent = content + "\n\n" + prose;
+      setContent(newContent);
+      pushToHistory(newContent, suggestions, comments);
+    }
+  };
+
   const EXPORT_OPTIONS = [
-    { id: 'pdf', label: 'Portable Document (.pdf)' },
-    { id: 'docx', label: 'Word Document (.docx)' },
-    { id: 'md', label: 'Markdown Format (.md)' },
-    { id: 'txt', label: 'Plain Text (.txt)' },
-    { id: 'copy', label: 'Copy to Clipboard' },
+    { 
+      id: 'pdf', 
+      label: 'Publisher PDF', 
+      sub: 'With AI Cover Art',
+      icon: <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg> 
+    },
+    { 
+      id: 'docx', 
+      label: 'Word Document', 
+      sub: '.docx format',
+      icon: <svg className="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+    },
+    { 
+      id: 'md', 
+      label: 'Markdown', 
+      sub: 'For editors',
+      icon: <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
+    },
+    { 
+      id: 'txt', 
+      label: 'Plain Text', 
+      sub: 'Universal',
+      icon: <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h7"></path></svg>
+    },
+    { 
+      id: 'copy', 
+      label: 'Clipboard', 
+      sub: 'Copy text',
+      icon: <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+    }
   ];
 
   return (
@@ -239,34 +384,56 @@ const App: React.FC = () => {
           </button>
         </div>
         
-        <div className="flex items-center gap-4 md:gap-8 pointer-events-auto relative" ref={exportMenuRef}>
+        <div className="flex items-center gap-3 md:gap-4 pointer-events-auto">
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleFileImport} 
+            accept=".txt,.md" 
+            className="hidden" 
+          />
           <button 
-            onClick={() => setShowExportMenu(!showExportMenu)} 
-            className="group flex items-center gap-2 md:gap-3 px-6 py-3 bg-white border border-gray-100 rounded-[1.25rem] shadow-sm text-[10px] font-black uppercase tracking-[0.2em] hover:shadow-md transition-all active:scale-95"
+            onClick={handleImportClick}
+            className="group flex items-center gap-2 px-4 py-3 bg-white border border-gray-100 rounded-[1.25rem] shadow-sm text-[10px] font-black uppercase tracking-[0.2em] hover:shadow-md transition-all active:scale-95 text-gray-500 hover:text-blue-600"
+            title="Import Document"
           >
-            <span className="hidden md:inline">Export Artifact</span>
-            <span className="md:hidden">Export</span>
-            <svg className={`w-3 h-3 transition-transform duration-300 ${showExportMenu ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7"></path>
-            </svg>
+             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+             <span className="hidden md:inline">Import</span>
           </button>
-          
-          {showExportMenu && (
-            <div className="absolute top-full right-0 mt-3 w-72 glass rounded-[1.5rem] shadow-2xl py-2 z-50 overflow-hidden border border-white/40 animate-in fade-in slide-in-from-top-2">
-              {EXPORT_OPTIONS.map(opt => (
-                <button 
-                  key={opt.id} 
-                  onClick={() => handleExport(opt.id as any)} 
-                  className="w-full text-left px-6 py-3.5 hover:bg-gray-900 hover:text-white text-[10px] font-black uppercase tracking-widest transition-colors flex items-center justify-between group"
-                >
-                  {opt.label}
-                  <svg className="w-3 h-3 opacity-0 group-hover:opacity-100 -translate-x-2 group-hover:translate-x-0 transition-all" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M9 5l7 7-7 7"></path>
-                  </svg>
-                </button>
-              ))}
-            </div>
-          )}
+
+          <div className="relative" ref={exportMenuRef}>
+            <button 
+              onClick={() => setShowExportMenu(!showExportMenu)} 
+              disabled={isExporting}
+              className="group flex items-center gap-2 md:gap-3 px-6 py-3 bg-white border border-gray-100 rounded-[1.25rem] shadow-sm text-[10px] font-black uppercase tracking-[0.2em] hover:shadow-md transition-all active:scale-95 disabled:opacity-50 min-w-[140px] justify-center"
+            >
+              <span className="hidden md:inline">{isExporting ? (exportStatus || 'Generating...') : 'Export Artifact'}</span>
+              <span className="md:hidden">Export</span>
+              <svg className={`w-3 h-3 transition-transform duration-300 ${showExportMenu ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7"></path>
+              </svg>
+            </button>
+            
+            {showExportMenu && (
+              <div className="absolute top-full right-0 mt-3 w-72 glass rounded-[1.5rem] shadow-2xl py-2 z-50 overflow-hidden border border-white/40 animate-in fade-in slide-in-from-top-2">
+                {EXPORT_OPTIONS.map(opt => (
+                  <button 
+                    key={opt.id} 
+                    onClick={() => handleExport(opt.id as any)} 
+                    className="w-full text-left px-6 py-4 hover:bg-gray-50 hover:text-blue-600 transition-colors flex items-center gap-4 group border-b border-gray-50 last:border-0"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-white border border-gray-100 flex items-center justify-center group-hover:scale-110 transition-transform shadow-sm">
+                      {opt.icon}
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-black uppercase tracking-widest text-gray-900 group-hover:text-blue-600">{opt.label}</div>
+                      <div className="text-[9px] text-gray-400 font-medium">{opt.sub}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </nav>
 
@@ -285,6 +452,8 @@ const App: React.FC = () => {
         content={content} suggestions={suggestions} setSuggestions={setSuggestions}
         onApplyAll={() => {}}
         onStartInterview={handleStartInterview}
+        onStartEcho={() => setShowEcho(true)}
+        currentDraftId={currentDraftId}
       />
 
       {/* Live Interview Room Overlay */}
@@ -294,7 +463,14 @@ const App: React.FC = () => {
         systemInstruction={interviewInstruction}
       />
 
-      <main className={`transition-all duration-500 ${showArchive || showInterview ? 'scale-95 blur-sm' : 'scale-100 blur-0'}`}>
+      {/* Echo Mode Overlay */}
+      <EchoSession
+        isOpen={showEcho}
+        onClose={handleEchoEnd}
+        tone={tone}
+      />
+
+      <main className={`transition-all duration-500 ${showArchive || showInterview || showEcho ? 'scale-95 blur-sm' : 'scale-100 blur-0'}`}>
         <Editor 
           content={content} tone={tone} 
           onChange={setContent}
