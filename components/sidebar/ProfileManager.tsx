@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { UserProfile, WritingTone } from '../../types';
+import { UserProfile, WritingTone, FileAttachment } from '../../types';
 import { db, PromptTemplate } from '../../lib/db';
+import { analyzeStyle, generateBookOutline } from '../../services/geminiService';
 
 interface ProfileManagerProps {
   activeProfile: UserProfile | null;
@@ -11,6 +12,7 @@ interface ProfileManagerProps {
   setPrompt: (p: string) => void;
   prompt: string;
   handleFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  attachments?: FileAttachment[];
   isProcessing: boolean;
   handleDraft: (useThinking: boolean) => void;
 }
@@ -23,6 +25,7 @@ const ProfileManager: React.FC<ProfileManagerProps> = ({
   setPrompt,
   prompt,
   handleFileChange,
+  attachments = [],
   isProcessing,
   handleDraft
 }) => {
@@ -31,6 +34,8 @@ const ProfileManager: React.FC<ProfileManagerProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [profileForm, setProfileForm] = useState<Partial<UserProfile>>({ name: '', tone: 'memoir', systemInstruction: '' });
   const [useThinking, setUseThinking] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [outline, setOutline] = useState<string | null>(null);
 
   // Prompt Templates State
   const [templates, setTemplates] = useState<PromptTemplate[]>([]);
@@ -131,6 +136,56 @@ const ProfileManager: React.FC<ProfileManagerProps> = ({
     setIsFormOpen(false);
   };
 
+  const handleAnalyzeVoice = async () => {
+    const textSamples = attachments
+      .filter(a => a.type === 'text/plain')
+      .map(a => a.data);
+      
+    if (textSamples.length === 0) {
+      alert("Please upload text files (.txt, .md) first to analyze your voice.");
+      return;
+    }
+
+    setIsAnalyzing(true);
+    try {
+      const result = await analyzeStyle(textSamples);
+      setProfileForm(prev => ({
+        ...prev,
+        systemInstruction: result.instruction,
+        // Map rough tone response to our types if possible, or keep existing
+      }));
+      alert(`Voice Analyzed: ${result.tone}\n\nStyle instruction updated.`);
+    } catch (e) {
+      console.error(e);
+      alert("Analysis failed.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleGenerateOutline = async () => {
+     const textSamples = attachments
+      .filter(a => a.type === 'text/plain')
+      .map(a => a.data)
+      .join('\n\n');
+      
+    if (!textSamples) {
+      alert("Please upload documents first to generate an outline.");
+      return;
+    }
+    
+    setIsAnalyzing(true);
+    try {
+      const outline = await generateBookOutline(textSamples);
+      setOutline(outline);
+    } catch (e) {
+      console.error(e);
+      alert("Outline generation failed.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
   const tones: { id: WritingTone; label: string; icon: string }[] = [
     { id: 'memoir', label: 'Memoir', icon: '🕯️' },
     { id: 'creative', label: 'Artistic', icon: '🎨' },
@@ -154,6 +209,15 @@ const ProfileManager: React.FC<ProfileManagerProps> = ({
           <div className="space-y-4 p-6 bg-white/50 rounded-3xl border border-blue-100 animate-in fade-in slide-in-from-top-4">
             <div className="flex justify-between items-center mb-2">
                 <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">{isEditing ? 'Edit Persona' : 'New Persona'}</span>
+                {attachments.length > 0 && (
+                  <button 
+                    onClick={handleAnalyzeVoice} 
+                    disabled={isAnalyzing}
+                    className="flex items-center gap-1 text-[9px] font-bold text-purple-600 hover:text-purple-700 disabled:opacity-50"
+                  >
+                    {isAnalyzing ? <span className="animate-spin">⏳</span> : '✨ Analyze Voice DNA'}
+                  </button>
+                )}
             </div>
             <input 
               value={profileForm.name} 
@@ -247,6 +311,42 @@ const ProfileManager: React.FC<ProfileManagerProps> = ({
 
         <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe a memory in its rawest form..." className="w-full h-48 bg-white/50 border border-gray-100 rounded-[2rem] p-6 text-sm outline-none resize-none shadow-inner" />
       </section>
+      
+      {/* Draft Planner Feature */}
+      {attachments.length > 0 && (
+         <section className="flex flex-col gap-2 -mt-4 mb-4 relative z-10">
+            <div className="flex justify-end">
+                <button 
+                  onClick={handleGenerateOutline} 
+                  disabled={isAnalyzing}
+                  className="text-[9px] font-black uppercase tracking-widest text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg hover:bg-indigo-100 transition-colors flex items-center gap-1 disabled:opacity-50"
+                >
+                  {isAnalyzing ? <span className="animate-spin">⏳</span> : '⚡ Generate Outline from Docs'}
+                </button>
+            </div>
+            
+            {/* Outline Display */}
+            {outline && (
+                <div className="bg-white/80 border border-indigo-100 rounded-2xl p-4 shadow-sm animate-in fade-in slide-in-from-top-2">
+                    <div className="flex justify-between items-center mb-2 pb-2 border-b border-gray-100">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">Generated Outline</span>
+                        <button onClick={() => setOutline(null)} className="text-gray-400 hover:text-gray-600">
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    </div>
+                    <div className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto custom-scrollbar font-serif">
+                        {outline}
+                    </div>
+                    <button 
+                        onClick={() => { setPrompt(outline); setOutline(null); }}
+                        className="w-full mt-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl text-[9px] font-bold uppercase tracking-widest transition-colors"
+                    >
+                        Use as Prompt
+                    </button>
+                </div>
+            )}
+         </section>
+      )}
 
       <section>
         <label className="flex items-center gap-3 p-4 bg-white/40 rounded-2xl border border-gray-100 cursor-pointer hover:bg-white/60 transition-colors">
@@ -261,9 +361,34 @@ const ProfileManager: React.FC<ProfileManagerProps> = ({
       </section>
 
       <section>
-        <label className="flex flex-col items-center justify-center gap-3 w-full p-10 border-2 border-dashed border-gray-200 rounded-[2.5rem] cursor-pointer hover:border-blue-400 transition-all">
-          <input type="file" className="hidden" multiple accept=".pdf,image/*" onChange={handleFileChange} />
-          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Attach Reference Photos</span>
+        <label className="flex flex-col items-center justify-center gap-3 w-full p-10 border-2 border-dashed border-gray-200 rounded-[2.5rem] cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition-all relative overflow-hidden group">
+          <input type="file" className="hidden" multiple accept=".pdf,image/*,.txt,.md,.json,.csv,.js,.ts,.zip" onChange={handleFileChange} />
+          {attachments.length === 0 ? (
+             <>
+                <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
+                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                </div>
+                <div className="text-center">
+                   <span className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Upload Assets</span>
+                   <span className="text-[9px] text-gray-300 mt-1">Images, PDFs, Text Docs, ZIPs</span>
+                </div>
+             </>
+          ) : (
+             <div className="w-full">
+                <div className="flex items-center justify-between mb-2">
+                   <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest">{attachments.length} Files Ready</span>
+                   <span className="text-[9px] text-gray-300">Click to add more</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                   {attachments.map((file, i) => (
+                      <div key={i} className="flex items-center gap-1.5 px-2 py-1 bg-white border border-blue-100 rounded-lg shadow-sm">
+                         <span className="text-[9px] font-bold text-gray-600 truncate max-w-[100px]" title={file.name}>{file.name}</span>
+                         <span className="text-[7px] text-gray-400 uppercase">{file.type.split('/')[1] || 'file'}</span>
+                      </div>
+                   ))}
+                </div>
+             </div>
+          )}
         </label>
       </section>
 

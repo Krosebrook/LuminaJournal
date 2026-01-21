@@ -78,6 +78,18 @@ const Archive: React.FC<ArchiveProps> = ({ isOpen, onClose, onSelectDraft, curre
     onClose();
   };
 
+  const handleFork = async (e: React.MouseEvent, draft: Draft) => {
+    e.stopPropagation();
+    const newDraft: Draft = {
+      ...draft,
+      id: undefined, // Let DB assign new ID
+      title: `${draft.title} (Fork)`,
+      updatedAt: Date.now()
+    };
+    await db.drafts.add(newDraft);
+    await loadDrafts();
+  };
+
   const handleDelete = async (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
     if (confirm('Are you sure you want to burn this manuscript? This action cannot be undone.')) {
@@ -157,7 +169,14 @@ const Archive: React.FC<ArchiveProps> = ({ isOpen, onClose, onSelectDraft, curre
                   onClick={() => onSelectDraft(draft)}
                   className={`group relative bg-white border border-white/60 p-6 rounded-[2rem] shadow-sm hover:shadow-xl transition-all cursor-pointer hover:-translate-y-1 ${currentDraftId === draft.id ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-[#fafafa]' : ''}`}
                 >
-                  <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="absolute top-4 right-4 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button 
+                      onClick={(e) => handleFork(e, draft)}
+                      className="p-1.5 hover:bg-emerald-50 text-gray-300 hover:text-emerald-500 rounded-full transition-colors"
+                      title="Fork Draft"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"></path></svg>
+                    </button>
                     <button 
                       onClick={(e) => handleDelete(e, draft.id!)}
                       className="p-1.5 hover:bg-red-50 text-gray-300 hover:text-red-500 rounded-full transition-colors"

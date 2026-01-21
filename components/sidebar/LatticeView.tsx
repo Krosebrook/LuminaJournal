@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { db, Entity } from '../../lib/db';
-import { extractEntities } from '../../services/geminiService';
+import { extractEntities, expandEntityLore } from '../../services/geminiService';
 
 interface LatticeViewProps {
   content: string;
@@ -12,6 +12,9 @@ const LatticeView: React.FC<LatticeViewProps> = ({ content, currentDraftId }) =>
   const [entities, setEntities] = useState<Entity[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [filter, setFilter] = useState<'All' | 'Person' | 'Location' | 'Theme'>('All');
+  const [selectedEntity, setSelectedEntity] = useState<Entity | null>(null);
+  const [expandedLore, setExpandedLore] = useState<string>('');
+  const [isExpanding, setIsExpanding] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -61,6 +64,22 @@ const LatticeView: React.FC<LatticeViewProps> = ({ content, currentDraftId }) =>
       console.error(e);
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  const handleExpandLore = async (entity: Entity) => {
+    setSelectedEntity(entity);
+    setIsExpanding(true);
+    setExpandedLore('');
+    
+    try {
+      const lore = await expandEntityLore(entity.name, entity.type, content);
+      setExpandedLore(lore);
+    } catch (e) {
+      console.error(e);
+      setExpandedLore("Could not expand lore at this time.");
+    } finally {
+      setIsExpanding(false);
     }
   };
 
@@ -129,7 +148,7 @@ const LatticeView: React.FC<LatticeViewProps> = ({ content, currentDraftId }) =>
   }, [entities]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative">
       <div className="flex items-center justify-between mb-4">
          <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">Memory Lattice</h3>
          <button 
@@ -160,7 +179,11 @@ const LatticeView: React.FC<LatticeViewProps> = ({ content, currentDraftId }) =>
       <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
         {entities.length === 0 && <p className="text-center text-xs text-gray-300 italic mt-10">The lattice is empty. Scan your draft to find connections.</p>}
         {entities.map(e => (
-          <div key={e.id} className="p-3 bg-white/60 rounded-xl border border-gray-100 hover:border-blue-200 transition-all group">
+          <div 
+            key={e.id} 
+            onClick={() => handleExpandLore(e)}
+            className="p-3 bg-white/60 rounded-xl border border-gray-100 hover:border-blue-200 transition-all group cursor-pointer hover:shadow-md"
+          >
             <div className="flex items-center justify-between mb-1">
               <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${
                 e.type === 'Person' ? 'bg-blue-100 text-blue-600' : 
@@ -174,6 +197,38 @@ const LatticeView: React.FC<LatticeViewProps> = ({ content, currentDraftId }) =>
           </div>
         ))}
       </div>
+
+      {/* Detail Overlay */}
+      {selectedEntity && (
+        <div className="absolute inset-0 z-20 bg-white/95 backdrop-blur-xl rounded-2xl p-6 flex flex-col animate-in fade-in slide-in-from-bottom-4">
+           <div className="flex items-center justify-between mb-4">
+             <div className="flex items-center gap-2">
+                <span className={`w-3 h-3 rounded-full ${
+                    selectedEntity.type === 'Person' ? 'bg-blue-500' : 
+                    selectedEntity.type === 'Location' ? 'bg-emerald-500' : 
+                    selectedEntity.type === 'Theme' ? 'bg-purple-500' : 'bg-amber-500'
+                }`}></span>
+                <h3 className="font-bold text-lg">{selectedEntity.name}</h3>
+             </div>
+             <button onClick={() => setSelectedEntity(null)} className="p-1 hover:bg-gray-100 rounded-full"><svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+           </div>
+           
+           <div className="flex-1 overflow-y-auto custom-scrollbar">
+             {isExpanding ? (
+               <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-2">
+                 <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                 <span className="text-xs uppercase tracking-widest">Consulting Archives...</span>
+               </div>
+             ) : (
+               <div className="prose prose-sm prose-blue">
+                 <p className="text-xs text-gray-500 italic border-l-2 border-gray-200 pl-2 mb-4">{selectedEntity.description}</p>
+                 <h4 className="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">Extended Lore</h4>
+                 <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{expandedLore}</div>
+               </div>
+             )}
+           </div>
+        </div>
+      )}
     </div>
   );
 };

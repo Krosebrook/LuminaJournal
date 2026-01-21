@@ -4,13 +4,70 @@ import { executeRawTerminalPrompt } from '../services/geminiService';
 import { encryptValue, decryptValue } from '../services/security';
 import { db, TerminalLog } from '../lib/db';
 
-const EXAMPLES = [
-  { label: 'Sensory Immersion', text: 'Expand this memory using only sensory details (smell, sound, touch): "I remember my grandmother\'s kitchen on a Sunday morning."' },
-  { label: 'Memory Hook', text: 'Give me 5 evocative opening sentences for a chapter about leaving my hometown for the first time.' },
-  { label: 'Dialogue Repair', text: 'Rewrite this conversation to sound more authentic to a 1970s teenager:\nMe: "I really want to go to the concert."\nDad: "No, it is too dangerous."' },
-  { label: 'Timeline Anchor', text: 'I have these memories: [A, B, C]. Suggest a narrative theme that connects them into a single chapter.' },
-  { label: 'Emotional Depth', text: 'Analyze this paragraph for emotional honesty. Where am I "telling" instead of "showing" my feelings?' }
-];
+// --- CONSTANTS & DATA ---
+
+const PROMPT_CATEGORIES: Record<string, string[]> = {
+  "Sensory": [
+    "Describe the smell of your childhood home in 3 words.",
+    "Write a paragraph focusing only on the texture of objects in the room.",
+    "What is the loudest sound you remember from school?",
+    "Describe a memory using only colors.",
+    "Evoke the taste of a specific family meal without naming the dish.",
+    "What does 'cold' feel like in this specific memory?",
+    "Describe the lighting of the scene at 5:00 PM.",
+    "Focus on the background noise of the city in this scene.",
+    "Write about a tactile sensation that makes you cringe.",
+    "Describe the weather not by how it looks, but how it feels on skin."
+  ],
+  "Character": [
+    "What is your protagonist's biggest lie?",
+    "Describe a character's hands and what they reveal about their work.",
+    "What does this person fear most that they would never admit?",
+    "Write a character profile based on the contents of their pocket.",
+    "What is the one thing this character would save in a fire?",
+    "How does your character react to an awkward silence?",
+    "What is their nervous tic?",
+    "Who is the person they most want to impress?",
+    "What is a contradictory trait of this character?",
+    "Describe their walk."
+  ],
+  "Plot": [
+    "Start a scene in the middle of an argument.",
+    "Write the climax of a chapter where a secret is revealed.",
+    "Create a timeline of events for the year 1999.",
+    "What is the inciting incident of this memory?",
+    "Write a scene where something is lost forever.",
+    "Describe a moment of unexpected grace.",
+    "Write an ending that is ambiguous but satisfying.",
+    "Outline the 'dark night of the soul' for this narrative arc.",
+    "Create a twist involving a forgotten letter.",
+    "Bridge the gap between two disparate memories."
+  ],
+  "Dialogue": [
+    "Write a conversation where no one says what they mean.",
+    "Fix this dialogue to sound more like a teenager from the 90s.",
+    "Write a monologue about regret.",
+    "Create subtext in a conversation about the weather.",
+    "Write an argument between two people who love each other.",
+    "Transcribe a memory of a phone call.",
+    "Write dialogue that is interrupted by a sudden event.",
+    "Give me 5 distinct voices for a crowded room scene.",
+    "Write a whisper.",
+    "Make this formal apology sound insincere."
+  ],
+  "Style": [
+    "Rewrite this paragraph in the style of Hemingway (concise).",
+    "Rewrite this sentence to be more lyrical and flowery.",
+    "Remove all adverbs from this text.",
+    "Make this passage sound like a noir detective novel.",
+    "Use a central metaphor of 'water' throughout this paragraph.",
+    "Write in the second person ('You').",
+    "Experiment with sentence fragmenting for pacing.",
+    "Turn this prose into a poem.",
+    "Write a stream-of-consciousness passage.",
+    "Simplify this complex idea for a child."
+  ]
+};
 
 interface StoredKey {
   id: string;
@@ -29,7 +86,7 @@ const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type, source
   const [isJsonExpanded, setIsJsonExpanded] = useState(false);
   const [isTextExpanded, setIsTextExpanded] = useState(false);
   
-  // Try to detect if it's JSON
+  // JSON Detection
   let isJson = false;
   let jsonParsed: any = null;
   try {
@@ -42,7 +99,7 @@ const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type, source
     isJson = false;
   }
 
-  // Detect code blocks (```code```)
+  // Code Block Detection
   const hasCodeBlocks = content.includes('```');
 
   const renderSources = () => {
@@ -79,23 +136,23 @@ const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type, source
   if (isJson && type === 'response') {
     const jsonString = JSON.stringify(jsonParsed, null, 2);
     const lineCount = jsonString.split('\n').length;
-    // Consider it "long" if it has more than 8 lines
-    const isLongJson = lineCount > 8;
+    const isLongJson = lineCount > 12;
 
-    // Syntax highlighting for JSON
+    // Advanced JSON Syntax Highlighting
     const highlightedJson = jsonString
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, (match) => {
-        let cls = 'text-pink-300'; // Numbers/Booleans
+        let cls = 'text-purple-300'; // Numbers
         if (/^"/.test(match)) {
           if (/:$/.test(match)) {
-            cls = 'text-blue-300'; // Keys
+            cls = 'text-blue-300 font-bold'; // Keys
           } else {
-            cls = 'text-yellow-200'; // Strings
+            cls = 'text-amber-200'; // Strings
           }
         } else if (/true|false/.test(match)) {
-          cls = 'text-orange-300';
+          cls = 'text-orange-400 font-bold'; // Booleans
         } else if (/null/.test(match)) {
-          cls = 'text-gray-400';
+          cls = 'text-gray-500 italic'; // Null
         }
         return `<span class="${cls}">${match}</span>`;
       });
@@ -115,9 +172,9 @@ const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type, source
     };
 
     return (
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 my-2">
         <div className="flex items-center gap-3">
-          <span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded font-black uppercase tracking-widest">JSON Data</span>
+          <span className="text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded font-black uppercase tracking-widest border border-emerald-500/20">JSON Object</span>
           {isLongJson && (
             <button 
                 onClick={() => setIsJsonExpanded(!isJsonExpanded)}
@@ -129,13 +186,13 @@ const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type, source
         </div>
         {(!isLongJson || isJsonExpanded) ? (
           <pre 
-            className="p-4 bg-white/5 rounded-xl border border-white/5 overflow-x-auto custom-scrollbar font-light leading-relaxed text-[11px]"
+            className="p-4 bg-[#0a0a0a] rounded-xl border border-white/10 overflow-x-auto custom-scrollbar font-mono text-[11px] leading-relaxed shadow-inner"
             dangerouslySetInnerHTML={{ __html: highlightedJson }}
           />
         ) : (
             <div 
                 onClick={() => setIsJsonExpanded(true)}
-                className="p-3 bg-white/5 rounded-xl border border-white/5 text-emerald-500/60 text-xs font-mono cursor-pointer hover:bg-white/10 transition-colors flex items-center gap-2"
+                className="p-3 bg-[#0a0a0a] rounded-xl border border-white/10 text-emerald-500/60 text-xs font-mono cursor-pointer hover:bg-white/5 transition-colors flex items-center gap-2"
             >
                 <span className="text-blue-400">ℹ️</span> {getSummary()}
             </div>
@@ -152,17 +209,18 @@ const FormattedOutput: React.FC<FormattedOutputProps> = ({ content, type, source
         {parts.map((part, i) => {
           if (part.startsWith('```')) {
             const lines = part.split('\n');
-            const language = lines[0].replace('```', '').trim() || 'draft';
+            const language = lines[0].replace('```', '').trim() || 'Text';
             const code = lines.slice(1, -1).join('\n');
             return (
-              <div key={i} className="rounded-xl overflow-hidden border border-white/10 shadow-lg bg-[#0d0d0d]">
-                <div className="bg-white/5 px-4 py-2 flex justify-between items-center">
+              <div key={i} className="rounded-xl overflow-hidden border border-white/10 shadow-lg bg-[#0d0d0d] my-2">
+                <div className="bg-white/5 px-4 py-2 flex justify-between items-center border-b border-white/5">
                   <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500/70">{language}</span>
-                  <div className="flex gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-red-500/20"></div>
-                    <div className="w-2 h-2 rounded-full bg-amber-500/20"></div>
-                    <div className="w-2 h-2 rounded-full bg-emerald-500/20"></div>
-                  </div>
+                  <button 
+                    onClick={() => navigator.clipboard.writeText(code)}
+                    className="text-[9px] uppercase font-bold text-white/30 hover:text-white transition-colors"
+                  >
+                    Copy
+                  </button>
                 </div>
                 <pre className="p-4 overflow-x-auto text-emerald-300/90 custom-scrollbar font-mono text-[11px] leading-relaxed">
                   {code}
@@ -226,6 +284,7 @@ const Terminal: React.FC = () => {
   const [useSearch, setUseSearch] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [activeCategory, setActiveCategory] = useState<string>('Sensory');
   
   // History State
   const [historyIndex, setHistoryIndex] = useState(-1);
@@ -293,6 +352,20 @@ const Terminal: React.FC = () => {
     inputRef.current?.focus();
   };
 
+  const suggestPrompt = async () => {
+    setIsBusy(true);
+    // Simple prompt to get a suggestion
+    const res = await executeRawTerminalPrompt(
+      "Generate a unique, thought-provoking prompt for a writer to help them unearth a deep memory. Return ONLY the prompt text.", 
+      'gemini-3-flash-preview', 
+      false
+    );
+    if (res.text) {
+      prePopulate(res.text.trim());
+    }
+    setIsBusy(false);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
         handleCommand();
@@ -331,10 +404,13 @@ const Terminal: React.FC = () => {
   const saveKey = () => {
     if (!newKeyName.trim() || !newKeyValue.trim()) return;
     
+    // Encrypt before storage
+    const encrypted = encryptValue(newKeyValue.trim());
+    
     const newEntry: StoredKey = {
       id: `k-${Date.now()}`,
       name: newKeyName.trim(),
-      value: encryptValue(newKeyValue.trim()),
+      value: encrypted,
       created: Date.now()
     };
     
@@ -365,18 +441,12 @@ const Terminal: React.FC = () => {
     }
   };
 
-  const copyKey = async (encryptedValue: string) => {
-    const raw = decryptValue(encryptedValue);
-    await navigator.clipboard.writeText(raw);
-    alert('API Key copied to clipboard!');
-  };
-
   return (
     <div className="flex flex-col h-full bg-black text-emerald-400 font-mono text-xs rounded-[2rem] overflow-hidden border border-white/10 shadow-2xl relative">
       {/* Header with Model Selector */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-white/5">
         <div className="flex flex-col">
-          <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500/50">Lumina Terminal v1.4</span>
+          <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500/50">Lumina Terminal v2.0</span>
           <div className="flex gap-2 mt-1">
             <button 
               onClick={() => setSelectedModel('gemini-3-pro-preview')}
@@ -426,6 +496,7 @@ const Terminal: React.FC = () => {
                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
                    Neural Key Vault
                  </h3>
+                 <p className="text-[10px] text-gray-400 mb-4">Keys are encrypted with a local cipher before storage. They are never transmitted except to Google AI servers.</p>
                  
                  {/* Add Key Form */}
                  <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-6 space-y-3">
@@ -440,6 +511,7 @@ const Terminal: React.FC = () => {
                       onChange={(e) => setNewKeyValue(e.target.value)}
                       placeholder="sk-..."
                       type="password"
+                      autoComplete="off"
                       className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder:text-white/20 outline-none focus:border-amber-500/50"
                    />
                    <button 
@@ -473,7 +545,6 @@ const Terminal: React.FC = () => {
                            </div>
                         </div>
                         <div className="flex gap-2 opacity-50 group-hover:opacity-100 transition-opacity">
-                           <button onClick={() => copyKey(k.value)} className="p-1.5 hover:bg-white/10 rounded text-blue-400" title="Copy Decrypted"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg></button>
                            <button onClick={() => deleteKey(k.id)} className="p-1.5 hover:bg-white/10 rounded text-red-400" title="Delete"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
                         </div>
                      </div>
@@ -504,25 +575,51 @@ const Terminal: React.FC = () => {
         {isBusy && (
           <div className="flex items-center gap-2 text-emerald-500">
             <span className="animate-bounce">●</span>
-            <span className="animate-pulse">_ Accessing neural history...</span>
+            <span className="animate-pulse">_ Processing neural input...</span>
           </div>
         )}
         <div ref={logEndRef} />
       </div>
 
-      {/* Input & Templates */}
+      {/* Categories & Examples */}
       <div className="p-4 border-t border-white/5 bg-white/5 backdrop-blur-md">
+        
+        {/* Category Tabs */}
+        <div className="flex items-center gap-2 mb-3 overflow-x-auto pb-1 custom-scrollbar">
+           <button 
+             onClick={suggestPrompt}
+             disabled={isBusy}
+             className="whitespace-nowrap px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-500 to-purple-600 text-white text-[9px] font-black uppercase tracking-widest hover:scale-105 transition-transform flex items-center gap-1 shadow-lg shrink-0 disabled:opacity-50"
+           >
+             <span className="text-xs">✨</span> AI Suggest
+           </button>
+           <div className="w-px h-6 bg-white/10 mx-1 shrink-0"></div>
+           {Object.keys(PROMPT_CATEGORIES).map(cat => (
+             <button
+               key={cat}
+               onClick={() => setActiveCategory(cat)}
+               className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all shrink-0 ${activeCategory === cat ? 'bg-white text-black' : 'text-white/40 hover:text-white hover:bg-white/5'}`}
+             >
+               {cat}
+             </button>
+           ))}
+        </div>
+
+        {/* Prompts List */}
         <div className="flex gap-2 overflow-x-auto pb-3 custom-scrollbar scroll-smooth">
-          {EXAMPLES.map((ex, idx) => (
+          {PROMPT_CATEGORIES[activeCategory]?.map((prompt, idx) => (
             <button 
               key={idx} 
-              onClick={() => prePopulate(ex.text)}
-              className="whitespace-nowrap px-3 py-1.5 rounded-lg border border-white/10 text-[8px] font-bold uppercase tracking-widest text-white/40 hover:text-emerald-400 hover:border-emerald-400/50 transition-all bg-white/5 hover:bg-emerald-500/5 shrink-0"
+              onClick={() => prePopulate(prompt)}
+              className="whitespace-nowrap px-3 py-1.5 rounded-lg border border-white/10 text-[8px] font-bold uppercase tracking-widest text-white/40 hover:text-emerald-400 hover:border-emerald-400/50 transition-all bg-white/5 hover:bg-emerald-500/5 shrink-0 max-w-[200px] truncate"
+              title={prompt}
             >
-              {ex.label}
+              {prompt}
             </button>
           ))}
         </div>
+
+        {/* Input Field */}
         <div className="flex items-center gap-3 mt-2 group bg-white/5 rounded-xl px-4 py-3 border border-transparent focus-within:border-emerald-500/50 transition-all">
           <span className="text-emerald-500 font-bold group-focus-within:animate-pulse">$</span>
           <input
@@ -533,7 +630,12 @@ const Terminal: React.FC = () => {
             placeholder="Execute memory command..."
             className="flex-1 bg-transparent outline-none text-emerald-300 placeholder:opacity-20 text-[11px]"
             disabled={isBusy}
+            autoComplete="off"
           />
+        </div>
+        <div className="text-[8px] text-white/20 mt-1 pl-6 flex justify-between">
+           <span>Use ↑/↓ to navigate history</span>
+           <span>Press Enter to execute</span>
         </div>
       </div>
     </div>

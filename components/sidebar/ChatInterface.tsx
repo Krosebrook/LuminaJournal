@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { ChatMessage, UserProfile } from '../../types';
+import { ChatMessage, UserProfile, FileAttachment } from '../../types';
 import { chatWithContext } from '../../services/geminiService';
 
 interface ChatInterfaceProps {
@@ -9,6 +9,7 @@ interface ChatInterfaceProps {
   setIsProcessing: (v: boolean) => void;
   isProcessing: boolean;
   onStartInterview: (instruction: string) => void;
+  attachments?: FileAttachment[];
 }
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({
@@ -16,7 +17,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   activeProfile,
   setIsProcessing,
   isProcessing,
-  onStartInterview
+  onStartInterview,
+  attachments = []
 }) => {
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -36,7 +38,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         chatInput, 
         (chunk) => { modelResponse = chunk; },
         activeProfile?.systemInstruction,
-        useSearch
+        useSearch,
+        attachments // Pass the files to the service
       );
       
       setChatHistory(prev => [...prev, { 
@@ -70,6 +73,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               </div>
           </div>
         </div>
+        
+        {/* Knowledge Base Indicator */}
+        {attachments.length > 0 && (
+           <div className="flex items-center gap-2 mx-2 px-3 py-2 bg-emerald-50 rounded-xl border border-emerald-100">
+              <svg className="w-3 h-3 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+              <span className="text-[9px] font-bold text-emerald-600 uppercase tracking-wide">
+                 RAG Active: {attachments.length} files in context
+              </span>
+           </div>
+        )}
 
         {chatHistory.map((msg, i) => (
           <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>

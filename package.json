@@ -14,7 +14,8 @@
     "react": "^19.2.3",
     "jspdf": "2.5.1",
     "docx": "8.5.0",
-    "dexie": "^4.0.1"
+    "dexie": "^4.0.1",
+    "jszip": "3.10.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
