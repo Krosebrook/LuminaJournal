@@ -3,6 +3,7 @@ import React, { useRef, useEffect, useCallback, useMemo, useReducer, useState } 
 import { rewriteSelectionStream, getProactiveSuggestions, generateSceneImage, generateSpeech, predictNextSentence, getSensorySynonyms, generateDraftStream, generateDocumentSummary } from '../services/geminiService';
 import { Suggestion, WritingTone, Comment, FileAttachment } from '../types';
 import { arrayBufferToBase64 } from '../services/audioUtils';
+import { db, Entity } from '../lib/db';
 
 interface EditorProps {
   content: string;
@@ -43,6 +44,8 @@ interface EditorState {
   hoveredSuggestion: { s: Suggestion, rect: DOMRect } | null;
   hoveredComment: { c: Comment, rect: DOMRect } | null;
   hoveredCommentId: string | null;
+  hoveredEntity: { e: Entity, rect: DOMRect } | null;
+  entities: Entity[];
   inspectedSpellError: { err: SpellError, rect: DOMRect } | null;
   showMarginNotes: boolean;
   generatedImage: string | null;
@@ -74,6 +77,8 @@ type EditorAction =
   | { type: 'SET_HOVER_SUGGESTION'; payload: { s: Suggestion, rect: DOMRect } | null }
   | { type: 'SET_HOVER_COMMENT'; payload: { c: Comment, rect: DOMRect } | null }
   | { type: 'SET_HOVER_COMMENT_ID'; payload: string | null }
+  | { type: 'SET_HOVER_ENTITY'; payload: { e: Entity, rect: DOMRect } | null }
+  | { type: 'SET_ENTITIES'; payload: Entity[] }
   | { type: 'SET_INSPECTED_ERROR'; payload: { err: SpellError, rect: DOMRect } | null }
   | { type: 'SET_GENERATED_IMAGE'; payload: string | null }
   | { type: 'SET_PLAYING_AUDIO'; payload: boolean }
@@ -104,6 +109,8 @@ const initialState: EditorState = {
   hoveredSuggestion: null,
   hoveredComment: null,
   hoveredCommentId: null,
+  hoveredEntity: null,
+  entities: [],
   inspectedSpellError: null,
   showMarginNotes: true,
   generatedImage: null,
@@ -134,6 +141,8 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
     case 'SET_HOVER_SUGGESTION': return { ...state, hoveredSuggestion: action.payload };
     case 'SET_HOVER_COMMENT': return { ...state, hoveredComment: action.payload };
     case 'SET_HOVER_COMMENT_ID': return { ...state, hoveredCommentId: action.payload };
+    case 'SET_HOVER_ENTITY': return { ...state, hoveredEntity: action.payload };
+    case 'SET_ENTITIES': return { ...state, entities: action.payload };
     case 'SET_INSPECTED_ERROR': return { ...state, inspectedSpellError: action.payload };
     case 'SET_GENERATED_IMAGE': return { ...state, generatedImage: action.payload };
     case 'SET_PLAYING_AUDIO': return { ...state, isPlayingAudio: action.payload };
@@ -164,7 +173,7 @@ const Editor: React.FC<EditorProps> = ({
   isProcessing, 
   setIsProcessing, 
   suggestions, 
-  setSuggestions,
+  setSuggestions, 
   comments, 
   setComments,
   onApplyAll,
@@ -179,6 +188,21 @@ const Editor: React.FC<EditorProps> = ({
   const hoverTimeoutRef = useRef<any>(null);
   const idleTimerRef = useRef<any>(null);
   const historyTimeoutRef = useRef<any>(null);
+
+  // Load Entities on Mount
+  useEffect(() => {
+    const fetchEntities = async () => {
+      try {
+        const ents = await db.entities.toArray();
+        dispatch({ type: 'SET_ENTITIES', payload: ents });
+      } catch (e) { console.error("Failed to load lattice entities", e); }
+    };
+    fetchEntities();
+    
+    // Set up polling for entity updates (simple reactivity)
+    const interval = setInterval(fetchEntities, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Synchronize internal state with DOM
   const highlightedContent = useMemo(() => {
@@ -213,7 +237,35 @@ const Editor: React.FC<EditorProps> = ({
       html = html.replace(new RegExp(escaped, 'g'), replacement);
     });
 
-    // 3. Apply Spellcheck Highlighting
+    // 3. Apply Entity Highlighting (Lore Links)
+    state.entities.forEach((entity) => {
+        if (!entity.name || entity.name.length < 3) return; // Skip short names
+        
+        const escaped = entity.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Only match whole words that are NOT already part of a tag definition
+        const regex = new RegExp(`\\b${escaped}\\b`, 'g');
+        
+        const isHovered = state.hoveredEntity?.e.id === entity.id;
+        const colorClass = entity.type === 'Person' ? 'text-blue-600 decoration-blue-300' :
+                           entity.type === 'Location' ? 'text-emerald-600 decoration-emerald-300' :
+                           entity.type === 'Theme' ? 'text-purple-600 decoration-purple-300' : 'text-amber-600 decoration-amber-300';
+                           
+        const replacement = `<span class="entity-mention group/entity cursor-help border-b border-dotted transition-colors ${colorClass} ${isHovered ? 'bg-gray-100' : ''}" data-entity-id="${entity.id}">${entity.name}</span>`;
+        
+        // Safe-ish replacement: ensure we don't break existing tags.
+        // Since we are operating on 'html' which is growing with tags, this is sensitive.
+        // Ideally we would parse, but for MVP we assume entity names are unique enough or don't clash with HTML attribute names.
+        // We skip replacement if the match seems to be inside a tag (rudimentary check).
+        
+        html = html.replace(regex, (match, offset) => {
+            // Quick check: is this match inside an HTML tag?
+            const prefix = html.substring(Math.max(0, offset - 20), offset);
+            if (prefix.match(/<[^>]*$/)) return match; // Inside a tag being opened
+            return replacement;
+        });
+    });
+
+    // 4. Apply Spellcheck Highlighting
     if (state.isSpellcheckEnabled) {
       state.spellErrors.forEach((err) => {
         const escaped = err.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -222,7 +274,7 @@ const Editor: React.FC<EditorProps> = ({
     }
 
     return html;
-  }, [content, suggestions, state.spellErrors, state.isSpellcheckEnabled, comments, state.hoveredCommentId]);
+  }, [content, suggestions, state.spellErrors, state.isSpellcheckEnabled, comments, state.hoveredCommentId, state.entities, state.hoveredEntity]);
 
   useEffect(() => {
     if (editorRef.current && !isInternalUpdate.current) {
@@ -242,7 +294,6 @@ const Editor: React.FC<EditorProps> = ({
     };
   }, []);
 
-  // --- LOGIC ---
   const runProactiveScan = useCallback(async () => {
     if (isProcessing || content.length < 50) return;
     setIsProcessing(true);
@@ -278,15 +329,12 @@ const Editor: React.FC<EditorProps> = ({
     }
   };
 
-  // Timer-based proactive scan (less frequent)
   useEffect(() => {
     if (isProcessing || content.length < 50) return;
-    const timer = setTimeout(runProactiveScan, 30000); // 30s debounce
+    const timer = setTimeout(runProactiveScan, 30000); 
     return () => clearTimeout(timer);
   }, [content, runProactiveScan, isProcessing]);
 
-
-  // --- GHOSTWRITER LOGIC ---
   const triggerGhostwriter = useCallback(async () => {
     if (content.length < 50 || isProcessing || state.showGhostwriter) return;
     
@@ -315,7 +363,6 @@ const Editor: React.FC<EditorProps> = ({
     isInternalUpdate.current = true;
     onChange(newText);
     
-    // Debounce history push to group typing events
     if (historyTimeoutRef.current) clearTimeout(historyTimeoutRef.current);
     historyTimeoutRef.current = setTimeout(() => {
         pushToHistory(newText, suggestions, comments);
@@ -352,36 +399,18 @@ const Editor: React.FC<EditorProps> = ({
     setTimeout(() => dispatch({ type: 'SET_FLASHING', payload: false }), 1200);
   }, [suggestions, content, onChange, setSuggestions, pushToHistory, onApplyAll, comments]);
 
-  // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const cmdKey = navigator.platform.toUpperCase().includes('MAC') ? e.metaKey : e.ctrlKey;
-      
-      if (cmdKey && !e.shiftKey && e.key.toLowerCase() === 'z') { 
-        e.preventDefault(); 
-        undo(); 
-      }
-      else if ((cmdKey && e.shiftKey && e.key.toLowerCase() === 'z') || (cmdKey && e.key.toLowerCase() === 'y')) { 
-        e.preventDefault(); 
-        redo(); 
-      }
-      else if (cmdKey && e.shiftKey && e.key.toLowerCase() === 'a') { 
-        if (suggestions.length > 0) { 
-          e.preventDefault(); 
-          handleMagicApplyAll(); 
-        } 
-      }
-      
-      if (e.key === 'Tab' && state.showGhostwriter) {
-        e.preventDefault();
-        acceptGhostwriter();
-      }
+      if (cmdKey && !e.shiftKey && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
+      else if ((cmdKey && e.shiftKey && e.key.toLowerCase() === 'z') || (cmdKey && e.key.toLowerCase() === 'y')) { e.preventDefault(); redo(); }
+      else if (cmdKey && e.shiftKey && e.key.toLowerCase() === 'a') { if (suggestions.length > 0) { e.preventDefault(); handleMagicApplyAll(); } }
+      if (e.key === 'Tab' && state.showGhostwriter) { e.preventDefault(); acceptGhostwriter(); }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleMagicApplyAll, suggestions.length, undo, redo, state.showGhostwriter, acceptGhostwriter]);
 
-  // --- MAGIC WRITER ---
   const handleWriterSubmit = async () => {
     if (!state.writerPrompt.trim()) return;
     dispatch({ type: 'SET_IS_WRITING', payload: true });
@@ -394,7 +423,7 @@ const Editor: React.FC<EditorProps> = ({
             let type = file.type;
             if (file.type.startsWith('text/') || file.name.match(/\.(md|json|csv|xml|js|ts|tsx|txt)$/i)) {
                data = await file.text();
-               type = 'text/plain'; // Treat code/text as text
+               type = 'text/plain'; 
             } else {
                const buffer = await file.arrayBuffer();
                data = arrayBufferToBase64(buffer);
@@ -410,16 +439,13 @@ const Editor: React.FC<EditorProps> = ({
             (chunk) => { generatedText = chunk; },
             undefined,
             false,
-            state.writerUseSearch // Pass search preference
+            state.writerUseSearch
         );
 
-        // Append to editor
         const newContent = content + (content.length > 0 ? "\n\n" : "") + generatedText;
         onChange(newContent);
-        // Immediate history push for AI actions
         pushToHistory(newContent, suggestions, comments);
         
-        // Reset Writer
         dispatch({ type: 'SET_WRITER_PROMPT', payload: '' });
         dispatch({ type: 'SET_WRITER_FILES', payload: [] });
         dispatch({ type: 'TOGGLE_WRITER', payload: false });
@@ -446,7 +472,6 @@ const Editor: React.FC<EditorProps> = ({
       onChange(newContent);
       setSuggestions(newSuggestions);
       dispatch({ type: 'SET_HOVER_SUGGESTION', payload: null });
-      // Immediate history push for suggestions
       pushToHistory(newContent, newSuggestions, comments);
     }
   }, [content, suggestions, comments, onChange, setSuggestions, pushToHistory]);
@@ -537,18 +562,19 @@ const Editor: React.FC<EditorProps> = ({
 
   const handleMouseMove = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
-    const isOverTooltip = target.closest('.suggestion-tooltip');
+    const isOverTooltip = target.closest('.suggestion-tooltip') || target.closest('.entity-tooltip');
     const isOverSuggestion = target.closest('.ai-suggestion');
     const isOverComment = target.closest('.user-comment');
+    const isOverEntity = target.closest('.entity-mention');
 
     if (isOverTooltip) {
       if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
       return;
     }
 
+    // Suggestions Handling
     if (isOverSuggestion) {
       if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
-      
       const id = (isOverSuggestion as HTMLElement).getAttribute('data-suggestion-id');
       if (state.hoveredSuggestion?.s.id !== id) {
          const suggestion = suggestions.find(s => s.id === id);
@@ -558,20 +584,35 @@ const Editor: React.FC<EditorProps> = ({
            }, 100);
          }
       }
-      dispatch({ type: 'SET_HOVER_COMMENT_ID', payload: null });
-      dispatch({ type: 'SET_HOVER_COMMENT', payload: null });
+      dispatch({ type: 'SET_HOVER_ENTITY', payload: null });
       return; 
     }
 
-    if (state.hoveredSuggestion && !isOverSuggestion && !isOverTooltip) {
+    // Entity Handling
+    if (isOverEntity) {
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+      const id = Number((isOverEntity as HTMLElement).getAttribute('data-entity-id'));
+      if (state.hoveredEntity?.e.id !== id) {
+         const entity = state.entities.find(e => e.id === id);
+         if (entity) {
+           dispatch({ type: 'SET_HOVER_ENTITY', payload: { e: entity, rect: (isOverEntity as HTMLElement).getBoundingClientRect() } });
+         }
+      }
+      return;
+    }
+
+    // Clear Hovers
+    if (state.hoveredSuggestion || state.hoveredEntity) {
        if (!hoverTimeoutRef.current) {
          hoverTimeoutRef.current = setTimeout(() => {
            dispatch({ type: 'SET_HOVER_SUGGESTION', payload: null });
+           dispatch({ type: 'SET_HOVER_ENTITY', payload: null });
            hoverTimeoutRef.current = null;
          }, 350); 
        }
     }
 
+    // Comments Handling
     if (isOverComment) {
        const id = (isOverComment as HTMLElement).getAttribute('data-comment-id');
        const comment = comments.find(c => c.id === id);
@@ -650,8 +691,6 @@ const Editor: React.FC<EditorProps> = ({
       dispatch({ type: 'SET_HOVER_COMMENT_ID', payload: id });
     }
   };
-
-  // --- NEW FEATURES ---
 
   const handleVisualize = async () => {
     if (!state.selection.text) return;
@@ -910,6 +949,32 @@ const Editor: React.FC<EditorProps> = ({
               <a href={state.generatedImage} download="lumina-scene.png" className="inline-block bg-white text-black px-6 py-2 rounded-full text-xs font-bold uppercase tracking-widest shadow-lg hover:scale-105 transition-transform">Save Image</a>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ENTITY LORE LINK TOOLTIP */}
+      {state.hoveredEntity && (
+        <div 
+          className="entity-tooltip fixed z-[100] bg-white/95 backdrop-blur-xl rounded-xl shadow-xl border border-gray-100 pointer-events-none animate-in fade-in zoom-in-95 duration-150 p-4 max-w-xs ring-1 ring-black/5"
+          style={{ 
+            top: state.hoveredEntity.rect.bottom + 8, 
+            left: Math.min(window.innerWidth - 320, Math.max(20, state.hoveredEntity.rect.left + (state.hoveredEntity.rect.width / 2) - 150))
+          }}
+        >
+          <div className="flex items-center justify-between mb-2 pb-2 border-b border-gray-100">
+             <div className="flex items-center gap-2">
+               <span className={`w-2 h-2 rounded-full ${
+                  state.hoveredEntity.e.type === 'Person' ? 'bg-blue-500' :
+                  state.hoveredEntity.e.type === 'Location' ? 'bg-emerald-500' :
+                  state.hoveredEntity.e.type === 'Theme' ? 'bg-purple-500' : 'bg-amber-500'
+               }`}></span>
+               <h4 className="font-bold text-sm text-gray-800">{state.hoveredEntity.e.name}</h4>
+             </div>
+             <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">{state.hoveredEntity.e.type}</span>
+          </div>
+          <p className="text-xs text-gray-600 leading-relaxed font-medium">
+            {state.hoveredEntity.e.description || "No lore available."}
+          </p>
         </div>
       )}
 

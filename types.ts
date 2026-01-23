@@ -43,6 +43,9 @@ export interface Draft {
   tone: WritingTone;
   wordCount: number;
   updatedAt: number;
+  // Persistence fields
+  suggestions?: Suggestion[];
+  comments?: Comment[];
 }
 
 export interface AppState {
